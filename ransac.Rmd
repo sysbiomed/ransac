@@ -1,0 +1,113 @@
+---
+title: "SOUND RANSAC"
+output: 
+  github_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+```{r libraries}
+devtools::load_all('.')
+library(ggplot2)
+library(parallel)
+library(ggbeeswarm)
+library(reshape2)
+library(verissimo)
+```
+
+## Functions 
+
+```{r ransac_function, echo = F}
+#
+# setup logger
+flog.layout(layout.simple.parallel)
+flog.appender(appender.tee('logger.txt'))
+flog.threshold(DEBUG)
+```
+
+## Load sample data functions
+
+```{r data}
+source('dataset_brca_tumor_normal.R')
+```
+
+## Data 
+
+```{r brca_data}
+#
+my.data <- dataset.ucla()
+my.data <- dataset.brca.tumor.normal()
+xdata <- my.data$xdata
+ydata <- my.data$ydata
+
+flog.info('Size of dataset', dim(xdata), capture = T)
+```
+
+### Show SD of features
+
+```{r}
+xdata.melt <- melt(xdata)
+colnames(xdata.melt) <- c('id', 'feature', 'value')
+
+xdata.melt$feature       <- factor(xdata.melt$feature)
+xdata.melt$feature.short <- xdata.melt$feature
+levels(xdata.melt$feature.short) <- gsub('ENSG0+','', levels(xdata.melt$feature))
+#
+g <- ggplot(xdata.melt, aes(feature.short, value)) + theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, face = 'italic', hjust = 0, vjust = .5)) + xlab('Feature') + 
+  geom_boxplot(notch = TRUE, varwidth = TRUE, colour = my.colors(1), outlier.colour = my.colors(5), outlier.shape = 1)
+g + scale_y_continuous(trans = 'log1p') + ylab('Value (log1p scale)')
+g + ylab('Value (no scale)')
+
+```
+
+
+## Test run
+
+
+```{r set seed and parameters}
+# parameters
+k              <- 20
+n              <- 30
+threshold      <- .4
+good.fit.perct <- .5
+# seed to make this reproducible
+my.seed        <- 209
+RNGkind("L'Ecuyer-CMRG")
+
+# cores
+mc.cores <- 1
+```
+
+### Ransac with original data
+
+```{r test}
+set.seed(my.seed)
+#
+results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold ^2, 
+                         good.fit.perct = good.fit.perct, 
+                         k = k, family = 'binomial', mc.cores = mc.cores)
+print.ransac.results(results.ransac, xdata, ydata, family = 'binomial', 'Original data')
+```
+
+### Ransac with perturbation in first 10 and last 10
+
+```{r test_perturbation}
+set.seed(my.seed)
+#
+ydata.pert <- ydata
+len <- length(ydata)
+ydata.pert[sample(which(ydata == 1),10)] <- 0
+ydata.pert[sample(which(ydata == 0),10)] <- 1
+#
+results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, good.fit.perct = good.fit.perct, k = k,
+                              family = 'binomial', mc.cores = mc.cores)
+print.ransac.results(results.ransac.pert, xdata, ydata.pert, family = 'binomial', 'With perturbation')
+```
+
+
