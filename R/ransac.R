@@ -38,9 +38,11 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     flog.debug('Running iteration %d / %d', ix, k)
     #
     # draw a random sample from the dataset with size n
-    xdata.min.ix <- sample(seq(nrow(xdata)), n)
+    xdata.min.ix <- family.fun$sample(ydata, n)
     xdata.min <- xdata[xdata.min.ix, ]
     ydata.min <- ydata[xdata.min.ix]
+    #
+    flog.debug('  ydata table: %d / %d (class 0 / class 1)', sum(ydata.min == 0), sum(ydata.min == 1))
     #
     # fit the model using the random sample
     my.fit <- family.fun$fit.model(xdata.min, ydata.min)
@@ -62,7 +64,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
                nrow(xdata))
     #
     # Check if the model is good
-    if (length(also.inliners.ix) >= nrow(xdata) * good.fit.perct) {
+    if (length(also.inliners.ix) + nrow(xdata.min) >= nrow(xdata) * good.fit.perct) {
       # this implies that we may have found a good model
       #  now test how good it is
       xdata.ix     <- c(also.inliners.ix, xdata.min.ix)

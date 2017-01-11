@@ -30,18 +30,14 @@ flog.appender(appender.tee('logger.txt'))
 flog.threshold(DEBUG)
 ```
 
-## Load sample data functions
-
-```{r data}
-source('dataset_brca_tumor_normal.R')
-```
-
 ## Data 
 
 ```{r brca_data}
 #
-my.data <- dataset.ucla()
-my.data <- dataset.brca.tumor.normal()
+# my.data <- dataset.ucla()
+# my.data <- dataset.brca.tumor.normal()
+my.data <- dataset.brca.tumor.normal.2()
+#my.data <- dataset.brca.tnbc(glmnet.alpha = 0.7, mc.cores = 10)
 xdata <- my.data$xdata
 ydata <- my.data$ydata
 
@@ -50,8 +46,13 @@ flog.info('Size of dataset', dim(xdata), capture = T)
 
 ### Show SD of features
 
-```{r}
-xdata.melt <- melt(xdata)
+```{r standard_deviation}
+if (ncol(xdata) > 100) {
+  xdata.melt <- melt(xdata[, sample(seq(ncol(xdata)), 50)])
+  flog.info('xdata has more than 50 co-variates, showing a random subset of 50.')
+} else {
+  xdata.melt <- melt(xdata)
+}
 colnames(xdata.melt) <- c('id', 'feature', 'value')
 
 xdata.melt$feature       <- factor(xdata.melt$feature)
@@ -67,21 +68,20 @@ g + ylab('Value (no scale)')
 ```
 
 
-## Test run
-
+## Test run with n = 30
 
 ```{r set seed and parameters}
 # parameters
-k              <- 20
+k              <- 1000
 n              <- 30
-threshold      <- .4
-good.fit.perct <- .5
+threshold      <- .4^2
+good.fit.perct <- .6
 # seed to make this reproducible
 my.seed        <- 209
 RNGkind("L'Ecuyer-CMRG")
 
 # cores
-mc.cores <- 1
+mc.cores <- 14
 ```
 
 ### Ransac with original data
@@ -89,9 +89,10 @@ mc.cores <- 1
 ```{r test}
 set.seed(my.seed)
 #
-results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold ^2, 
+results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold, 
                          good.fit.perct = good.fit.perct, 
                          k = k, family = 'binomial', mc.cores = mc.cores)
+# save(results.ransac, file = 'ransacCache.RData')
 print.ransac.results(results.ransac, xdata, ydata, family = 'binomial', 'Original data')
 ```
 
@@ -105,9 +106,54 @@ len <- length(ydata)
 ydata.pert[sample(which(ydata == 1),10)] <- 0
 ydata.pert[sample(which(ydata == 0),10)] <- 1
 #
-results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, good.fit.perct = good.fit.perct, k = k,
+results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
+                              good.fit.perct = good.fit.perct, k = k,
                               family = 'binomial', mc.cores = mc.cores)
+# save(results.ransac, results.ransac.pert, file = 'ransacCache.RData')
 print.ransac.results(results.ransac.pert, xdata, ydata.pert, family = 'binomial', 'With perturbation')
 ```
 
+## Test run with n = 1000
 
+```{r set_seed_and_parameters_2}
+# parameters
+k              <- 1000
+n              <- 30
+threshold      <- .2^2
+good.fit.perct <- .6
+# seed to make this reproducible
+my.seed        <- 209
+RNGkind("L'Ecuyer-CMRG")
+
+# cores
+mc.cores <- 14
+```
+
+### Ransac with original data
+
+```{r test_2}
+set.seed(my.seed)
+#
+results.ransac.2 <- ransac(xdata, ydata, n = n, threshold = threshold, 
+                         good.fit.perct = good.fit.perct, 
+                         k = k, family = 'binomial', mc.cores = mc.cores)
+# save(results.ransac, results.ransac.pert, results.ransac.2, file = 'ransacCache.RData')
+print.ransac.results(results.ransac.2, xdata, ydata, family = 'binomial', 'Original data')
+```
+
+### Ransac with perturbation in first 10 and last 10
+
+```{r test_perturbation_2}
+set.seed(my.seed)
+#
+ydata.pert <- ydata
+len <- length(ydata)
+ydata.pert[sample(which(ydata == 1),10)] <- 0
+ydata.pert[sample(which(ydata == 0),10)] <- 1
+#
+results.ransac.pert.2 <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
+                              good.fit.perct = good.fit.perct, k = k,
+                              family = 'binomial', mc.cores = mc.cores)
+# save(results.ransac, results.ransac.pert, results.ransac.2, results.ransac.pert.2, file = 'ransacCache.RData')
+print.ransac.results(results.ransac.pert.2, xdata, ydata.pert, family = 'binomial', 'With perturbation')
+```

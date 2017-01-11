@@ -13,6 +13,7 @@ dataset.ucla <- function() {
   #
   xdata <- as.matrix(mydata[,c('gpa','rank','gre')])
   ydata <- mydata$admit
+  colnames(ydata) <- 'logit_class'
   #
   return(list(xdata = xdata, ydata = ydata))
 }

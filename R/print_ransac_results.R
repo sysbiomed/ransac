@@ -42,9 +42,20 @@ print.ransac.results <- function(results.ransac, xdata, ydata, family = 'binomia
     #
     # misclassifications
     miscl <- list()
-    miscl$ransac <- sum(abs(my.fits$ransac - ydata) > .5)
-    miscl$glmnet <- sum(abs(my.fits$glmnet - ydata) > .5)
-    title.str <- paste0(name, ' : ransac misclass. = ', miscl$ransac, ' : glmnet misclass. = ', miscl$glmnet)
+    miscl$ransac <- list()
+    miscl$glmnet <- list()
+    miscl$ransac$false.pos <- sum(round(ydata - my.fits$ransac) == -1)
+    miscl$ransac$false.neg <- sum(round(ydata - my.fits$ransac) == 1)
+    #
+    miscl$glmnet$false.pos <- sum(round(ydata - my.fits$glmnet) == -1)
+    miscl$glmnet$false.neg <- sum(round(ydata - my.fits$glmnet) == 1)
+    #
+    title.str <- sprintf('%s : ransac FP %d / %d FN | glmnet FP %d / %d FN',
+                         name,
+                         miscl$ransac$false.pos,
+                         miscl$ransac$false.neg,
+                         miscl$glmnet$false.pos,
+                         miscl$glmnet$false.neg)
     #
     g <- ggplot(data = my.df.class) + theme_minimal() + ggtitle(title.str) + ylab('Classification') + xlab('Model')
     g <- g + geom_point(aes(ix, value, color = type))
