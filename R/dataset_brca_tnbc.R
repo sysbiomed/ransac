@@ -79,5 +79,5 @@ dataset.brca.tnbc <- function(select = c(), glmnet.alpha = NULL, mc.cores = 1, c
   }
   colnames(ydata) <- 'logit_class'
   #
-  return(list(xdata = xdata, ydata = ydata))
+  return(list(xdata = xdata, ydata = ydata, name = 'Breast Invasive Carcinome TNBC (triple negative breast cancer)'))
 }

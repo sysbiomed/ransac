@@ -44,9 +44,53 @@ family.binomial <- function() {
   }
 
   # fitting model
-  fit.fun <- function(xdata, ydata, mc.cores = 1) {
+  fit.fun <- function(xdata, ydata, alpha = 0, nlambda = NULL, mc.cores = 1) {
+    # generate balanced folds for the cross-validation
+
+    # get index of each class
+    ydata.class.0 <- which(ydata == levels(factor(ydata))[1])
+    ydata.class.1 <- which(ydata == levels(factor(ydata))[2])
+    # calculate folds for each class
+    out.balanced <- balanced.cv.folds(ydata.class.0, ydata.class.1, 10)
+    # join them
+    foldid <- array(0,length(ydata))
+    foldid[ydata.class.0] <- out.balanced$output[[1]]
+    foldid[ydata.class.1] <- out.balanced$output[[2]]
     # need to suppress wanrings
-    suppressWarnings(cv.glmnet(xdata, ydata, alpha = 0, family = 'binomial', lambda = c(0,1e-7, 1e-5, 1e-3, 1e-1)))
+    if (is.null(nlambda)) {
+      # little regularization
+      if (any(names(formals(get("cv.glmnet"))) == 'mc.cores')){
+        # https://github.com/averissimo/rpackage-glmnet
+        #  that uses parallel package instead
+        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
+                                          foldid = foldid,
+                                          family = 'binomial',
+                                          lambda = c(1e-9, 1e-7, 1e-5, 1e-3, 1e-1),
+                                          mc.cores = mc.cores)))
+      } else {
+        # CRAN's glmnet package
+        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
+                                          foldid = foldid,
+                                          family = 'binomial',
+                                          lambda = c(0,1e-7, 1e-5, 1e-3, 1e-1))))
+      }
+    } else {
+      # normal regularization
+      if (any(names(formals(get("cv.glmnet"))) == 'mc.cores')){
+        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
+                                          foldid = foldid,
+                                          family = 'binomial',
+                                          nlambda = nlambda,
+                                          mc.cores = mc.cores)))
+      } else {
+        # CRAN's glmnet package
+        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
+                                          foldid = foldid,
+                                          family = 'binomial',
+                                          nlambda = nlambda)))
+      }
+    }
+    #
   }
 
   #
@@ -63,3 +107,4 @@ family.binomial <- function() {
     # sample function
     sample = sample.fun))
 }
+

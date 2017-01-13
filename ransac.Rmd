@@ -3,26 +3,38 @@ title: "SOUND RANSAC"
 output: 
   github_document:
     toc: true
+    dev: svg
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Libraries
-
-```{r libraries}
+```{r libraries, include = FALSE}
 devtools::load_all('.')
 library(ggplot2)
 library(parallel)
 library(ggbeeswarm)
 library(reshape2)
 library(verissimo)
+library(futile.logger)
+
+generate.cache.name <- function(name) {
+  cache.name <- sprintf('%s-%d-%d-%d-%d-%f-%f-%d-%s.RData', 
+                        name, nrow(xdata), ncol(xdata),
+                        k, n, threshold, 
+                        good.fit.perct, 
+                        my.seed, 
+                        my.data$name)
+  cache.name <- file.path('cache', gsub('[ /]', '_', cache.name))
+}
 ```
 
 ## Functions 
 
-```{r ransac_function, echo = F}
+Setup logging
+
+```{r ransac_function}
 #
 # setup logger
 flog.layout(layout.simple.parallel)
@@ -30,18 +42,27 @@ flog.appender(appender.tee('logger.txt'))
 flog.threshold(DEBUG)
 ```
 
-## Data 
+## Load UCLA data if not already available
 
 ```{r brca_data}
 #
-# my.data <- dataset.ucla()
-# my.data <- dataset.brca.tumor.normal()
-my.data <- dataset.brca.tumor.normal.2()
-#my.data <- dataset.brca.tnbc(glmnet.alpha = 0.7, mc.cores = 10)
-xdata <- my.data$xdata
-ydata <- my.data$ydata
+if (!exists('xdata') || !exists('ydata')) {
+  #my.data <- dataset.ucla()
+  # my.data <- dataset.brca.tumor.normal()
+  my.data <- dataset.brca.tumor.normal.2()
+  # my.data <- dataset.brca.tnbc(glmnet.alpha = 0.7, mc.cores = 10)
+  xdata <- my.data$xdata
+  ydata <- my.data$ydata
+}
 
-flog.info('Size of dataset', dim(xdata), capture = T)
+flog.info(paste0('Description of \'%s\' dataset:\n',
+              '        cases: %d\n',
+              '   class == 1: %d\n',
+              '   class == 0: %d\n',
+              '---------------------\n',
+              '  co-variates: %d'),
+          my.data$name, nrow(xdata), sum(ydata == 1), sum(ydata == 0),
+          ncol(xdata))
 ```
 
 ### Show SD of features
@@ -49,7 +70,7 @@ flog.info('Size of dataset', dim(xdata), capture = T)
 ```{r standard_deviation}
 if (ncol(xdata) > 100) {
   xdata.melt <- melt(xdata[, sample(seq(ncol(xdata)), 50)])
-  flog.info('xdata has more than 50 co-variates, showing a random subset of 50.')
+  flog.info('xdata has more than 50 co-variates (%d), showing a random subset of 50.', ncol(xdata))
 } else {
   xdata.melt <- melt(xdata)
 }
@@ -72,27 +93,55 @@ g + ylab('Value (no scale)')
 
 ```{r set seed and parameters}
 # parameters
-k              <- 1000
 n              <- 30
-threshold      <- .4^2
-good.fit.perct <- .6
+threshold      <- .35^2
+good.fit.perct <- .80
 # seed to make this reproducible
 my.seed        <- 209
 RNGkind("L'Ecuyer-CMRG")
 
 # cores
-mc.cores <- 14
+mc.cores <- 16
+
+#
+if (exists('force.k')) {
+  k <- force.k 
+} else {
+  k <- 1000
+}
 ```
+
+### Description of parameters
+
+- `k`: number of iterations
+- `n`: cases to be included in the model (this should be the minimum number of observations required to fit the model)
+- `threshold`: error threshold to keep case as inlier (`error` < `threshold`)
+- `good.fit.perct`: percentage of inlier cases that are required to consider a valid model
+
+```{r param_description}
+flog.info(paste0('Description of parameters:\n', 
+                 '                k: %d\n', '                n: %d\n',
+                 '        threshold: %g\n', '  good.fit.perct : %g'), 
+          k, n , threshold, good.fit.perct)
+```
+
 
 ### Ransac with original data
 
 ```{r test}
 set.seed(my.seed)
 #
-results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold, 
-                         good.fit.perct = good.fit.perct, 
-                         k = k, family = 'binomial', mc.cores = mc.cores)
-# save(results.ransac, file = 'ransacCache.RData')
+cache.name <- generate.cache.name('results.ransac')
+if (file.exists(cache.name)) {
+  load(cache.name)
+  flog.info('Loading cached ransac from %s', cache.name)
+} else {
+  results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold, 
+                           good.fit.perct = good.fit.perct, 
+                           k = k, family = 'binomial', mc.cores = mc.cores,
+                           nlambda = 100, alpha = 0.5)
+  save(results.ransac, file = cache.name)
+}
 print.ransac.results(results.ransac, xdata, ydata, family = 'binomial', 'Original data')
 ```
 
@@ -106,54 +155,36 @@ len <- length(ydata)
 ydata.pert[sample(which(ydata == 1),10)] <- 0
 ydata.pert[sample(which(ydata == 0),10)] <- 1
 #
-results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
-                              good.fit.perct = good.fit.perct, k = k,
-                              family = 'binomial', mc.cores = mc.cores)
-# save(results.ransac, results.ransac.pert, file = 'ransacCache.RData')
+cache.name <- generate.cache.name('results.ransac.pert')
+if (file.exists(cache.name)) {
+  load(cache.name)
+} else {
+  results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
+                                good.fit.perct = good.fit.perct, k = k,
+                                family = 'binomial', mc.cores = mc.cores,
+                                nlambda = 100, alpha = 0.5)
+  save(results.ransac.pert, file = cache.name)
+}
 print.ransac.results(results.ransac.pert, xdata, ydata.pert, family = 'binomial', 'With perturbation')
 ```
 
-## Test run with n = 1000
 
-```{r set_seed_and_parameters_2}
-# parameters
-k              <- 1000
-n              <- 30
-threshold      <- .2^2
-good.fit.perct <- .6
-# seed to make this reproducible
-my.seed        <- 209
-RNGkind("L'Ecuyer-CMRG")
 
-# cores
-mc.cores <- 14
+```{r, eval = F}
+for (ix in 1:2000) {
+  results.ransac$errors[[ix]]$this.model <- NULL
+}
+rmse <- sapply(1:2000,function(ix) {
+  res <- sqrt(mean(ydata - predict(results.ransac$errors[[ix]]$this.model, newx = xdata, s = 'lambda.min', type = 'response'))^2)
+  if (is.null(res)) {
+    flog.info('problem with ix %d', ix)
+  }
+  return(res)
+})
+new.best.model <- results.ransac$errors[[which(rmse == min(rmse))]]$this.model
+#
+results.ransac$best.error.all <- sqrt(mean(ydata - predict(new.best.model, newx = xdata, s = 'lambda.min', type = 'response'))^2) 
+
+results.ransac$best.model.all <- new.best.model
 ```
 
-### Ransac with original data
-
-```{r test_2}
-set.seed(my.seed)
-#
-results.ransac.2 <- ransac(xdata, ydata, n = n, threshold = threshold, 
-                         good.fit.perct = good.fit.perct, 
-                         k = k, family = 'binomial', mc.cores = mc.cores)
-# save(results.ransac, results.ransac.pert, results.ransac.2, file = 'ransacCache.RData')
-print.ransac.results(results.ransac.2, xdata, ydata, family = 'binomial', 'Original data')
-```
-
-### Ransac with perturbation in first 10 and last 10
-
-```{r test_perturbation_2}
-set.seed(my.seed)
-#
-ydata.pert <- ydata
-len <- length(ydata)
-ydata.pert[sample(which(ydata == 1),10)] <- 0
-ydata.pert[sample(which(ydata == 0),10)] <- 1
-#
-results.ransac.pert.2 <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
-                              good.fit.perct = good.fit.perct, k = k,
-                              family = 'binomial', mc.cores = mc.cores)
-# save(results.ransac, results.ransac.pert, results.ransac.2, results.ransac.pert.2, file = 'ransacCache.RData')
-print.ransac.results(results.ransac.pert.2, xdata, ydata.pert, family = 'binomial', 'With perturbation')
-```

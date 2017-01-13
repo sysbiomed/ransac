@@ -12,8 +12,8 @@ dataset.ucla <- function() {
   mydata <- read.csv("http://www.ats.ucla.edu/stat/data/binary.csv")
   #
   xdata <- as.matrix(mydata[,c('gpa','rank','gre')])
-  ydata <- mydata$admit
+  ydata <- data.frame(mydata$admit)
   colnames(ydata) <- 'logit_class'
   #
-  return(list(xdata = xdata, ydata = ydata))
+  return(list(xdata = xdata, ydata = ydata, name = 'UCLA'))
 }
