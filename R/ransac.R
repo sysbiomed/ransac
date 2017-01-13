@@ -7,8 +7,8 @@
 #' @param threshold error threshold to determine if observation is inliner
 #' @param good.fit.perct discard models that have less than this percentage of inliners
 #' @param k number of times model is run
-#' @param family
-#' @param mc.cores
+#' @param family type of model that should be used
+#' @param mc.cores number of processes to process the iteration of ransac
 #'
 #' @return
 #' @export
@@ -22,7 +22,8 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
   # retrieve family by name
   if (is.character(family)) {
     family.fun <- switch(family,
-                         binomial = family.binomial())
+                         binomial = family.binomial(),
+                         binomial.glm = family.binomial.glm())
   } else {
     family.fun <- family
   }
@@ -49,7 +50,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     flog.debug('  ydata table: %d / %d (class 0 / class 1)', sum(ydata.min == 0), sum(ydata.min == 1))
     #
     # fit the model using the random sample
-    my.fit <- family.fun$fit.model(xdata.min, ydata.min, ...)
+    inliers.model <- family.fun$fit.model(xdata.min, ydata.min, mc.cores = 1, ...)
     flog.debug('  finished the fitting %d', ix)
     #
     # test all the observations outside the random dataset
@@ -57,7 +58,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     test.inliners.ix <- seq(nrow(xdata))[-xdata.min.ix]
     # TODO: drop the sapply and do this with matrices
     res <- sapply(test.inliners.ix, function(test.ix) {
-      my.prediction <- family.fun$predict(object = my.fit, newx = t(xdata[test.ix,]))
+      my.prediction <- family.fun$predict(object = inliers.model, newx = t(xdata[test.ix,]))
       family.fun$error(my.prediction, ydata[test.ix]) < threshold
     })
     also.inliners.ix <- test.inliners.ix[res]
@@ -73,18 +74,58 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
       # this implies that we may have found a good model
       #  now test how good it is
       xdata.ix     <- c(also.inliners.ix, xdata.min.ix)
-      my.residuals <- family.fun$predict(object = my.fit, newx = xdata[xdata.ix,])
-      this.error   <- family.fun$model.error(ydata[xdata.ix], my.residuals)
-      # with all xdata
-      my.residuals.all <- family.fun$predict(object = my.fit, newx = xdata)
-      this.error.all   <- family.fun$model.error(ydata, my.residuals.all)
+
       #
-      flog.debug(paste0('  good fit!!\n',
-                        '           error: %f\n',
-                        '  error with all: %f'),
-                 this.error, this.error.all)
-      return(list(this.error = this.error, this.model = my.fit, min.ix = xdata.min.ix,
-                  this.error.all = this.error.all))
+      #
+      # Calculating loss with original model fitted with n observations
+
+      # only inliers + maybe.inliers
+      my.residuals                      <- family.fun$predict(object = inliers.model, newx = xdata[xdata.ix,])
+      error.inliers.model.inliers.ydata <- family.fun$model.error(ydata[xdata.ix], my.residuals)
+
+      # with all xdata
+      my.residuals                    <- family.fun$predict(object = inliers.model, newx = xdata)
+      error.inliers.model.all.ydata   <- family.fun$model.error(ydata, my.residuals)
+
+      #
+      #
+      # Calculating loss with refitted model with inliers + maybe.inliers
+
+      # Re-estimating model
+      all.inliers.model <- family.fun$fit.model(xdata[xdata.ix,], ydata[xdata.ix], mc.cores = 1, ...)
+
+      # only inliers + maybe.inliers
+      my.residuals                    <- family.fun$predict(object = all.inliers.model, newx = xdata[xdata.ix,])
+      error.all.inliers.model.inliers <- family.fun$model.error(ydata[xdata.ix], my.residuals)
+
+      # with all xdata
+      my.residuals                      <- family.fun$predict(object = all.inliers.model, newx = xdata)
+      error.all.inliers.model.all.ydata <- family.fun$model.error(ydata, my.residuals)
+
+      #
+      flog.debug(paste0('  %d / %d good fit!! There are %d total inliers Loss:\n',
+                        '   initial model with inliers only: %f\n',
+                        '       initial model with all data: %f\n',
+                        '  refitted model with inliers only: %f\n',
+                        '      refitted model with all data: %f'),
+                 ix, k,
+                 length(xdata.ix),
+                 error.inliers.model.inliers.ydata,
+                 error.inliers.model.all.ydata,
+                 error.all.inliers.model.inliers,
+                 error.all.inliers.model.all.ydata)
+      #
+      return(list(inliers.model     = inliers.model,
+                  all.inliers.model = all.inliers.model,
+                  #
+                  error.inliers.model.inliers.ydata = error.inliers.model.inliers.ydata,
+                  error.inliers.model.all.ydata     = error.inliers.model.all.ydata,
+                  #
+                  error.all.inliers.model.inliers   = error.all.inliers.model.inliers,
+                  error.all.inliers.model.all.ydata = error.all.inliers.model.all.ydata,
+                  #
+                  min.ix     = xdata.min.ix,
+                  inliers.ix = xdata.ix))
     }
     flog.debug('  did not have a good fit')
     return(list())
@@ -97,26 +138,147 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
   # Consolidate results finding only the best one
   #
   # Setting temporary variables to keep the best model
-  best.error <- Inf
-  best.model <- NA
-  best.model.all <- NA
-  best.error.all <- Inf
+  best.error.inliers.inliers.ydata <- Inf
+  best.model.inliers.inliers.ydata <- NA
+  #
+  best.model.inliers.all.ydata <- NA
+  best.error.inliers.all.ydata <- Inf
+  #
+  best.model.all.inliers.all <- NA
+  best.error.all.inliers.all <- Inf
+  #
+  best.model.all.inliers.consensus <- NA
+  best.error.all.inliers.consensus <- Inf
+  #
+  best.model.all.inliers.model.inliers <- NA
+  best.error.all.inliers.model.inliers <- Inf
   #
   lapply(seq_along(error.array), function(ix) {
     el <- error.array[[ix]]
-    if (!is.null(el) && !is.na(el) && length(el) > 1 &&
-        !is.null(el$this.error) && el$this.error < best.error) {
-      best.error <<- el$this.error
-      best.model <<- el$this.model
+    #
+    if (ix %% 100 == 0) {
+      flog.debug('Step %d / %d', ix, k)
     }
-    if (!is.null(el) && !is.na(el) && length(el) > 1 &&
-        !is.null(el$this.error.all) && el$this.error.all < best.error.all) {
-      best.error.all <<- el$this.error.all
-      best.model.all <<- el$this.model
+    if ((is.list(el) && length(el) == 0) || is.na(el) || is.null(el)) {
+      return(0)
     }
-    el$this.model <- NULL
+    # model from initial set of inliers
+    #  chosen by best RMSE with inliers dataset
+    res <- lower.loss(el$error.inliers.model.inliers.ydata, el$inliers.model,
+                      best.error.inliers.inliers.ydata, best.model.inliers.inliers.ydata)
+    if (!is.null(res)) {
+      best.error.inliers.inliers.ydata <<- res$best.error
+      best.model.inliers.inliers.ydata <<- res$best.model
+    }
+
+    # model from initial set of inliers
+    #  chosen by best RMSE with complete dataset
+    res <- lower.loss(el$error.inliers.model.all.ydata, el$inliers.model,
+                      best.error.inliers.all.ydata, best.model.inliers.all.ydata)
+    if (!is.null(res)) {
+      best.error.inliers.all.ydata <<- res$best.error
+      best.model.inliers.all.ydata <<- res$best.model
+    }
+
+    #
+    # models with inliers + maybe.inliers
+
+    # model from all inliers (inliers + maybe.inliers)
+    #  chosen by best RMSE with complete dataset
+    res <- lower.loss(el$error.inliers.model.all.ydata, el$all.inliers.model,
+                      best.error.all.inliers.all, best.model.all.inliers.all)
+    if (!is.null(res)) {
+      best.error.all.inliers.all <<- res$best.error
+      best.model.all.inliers.all <<- res$best.model
+    }
+
+    # model from all inliers (inliers + maybe.inliers)
+    #  chosen by best RMSE with inliers + maybe.inliers dataset
+    res <- lower.loss(el$error.all.inliers.model.inliers, el$all.inliers.model,
+                      best.error.all.inliers.model.inliers, best.model.all.inliers.model.inliers)
+    if (!is.null(res)) {
+      best.error.all.inliers.model.inliers <<- res$best.error
+      best.model.all.inliers.model.inliers <<- res$best.model
+    }
+
+    # model from all inliers (inliers + maybe.inliers)
+    #  chosen by most all inliers and resolves ties with RMSE
+    res <- higher.consensus(family.fun,
+                            el$error.all.inliers.model.all.ydata, el$all.inliers.model,
+                            best.error.all.inliers.consensus, best.model.all.inliers.consensus)
+    if (!is.null(res)) {
+      best.error.all.inliers.consensus <<- res$best.error
+      best.model.all.inliers.consensus <<- res$best.model
+    }
+
+    # trims down size of cache and memory usage
+    error.array[[ix]]$inliers.model <<- NULL
+    error.array[[ix]]$all.inliers.model <<- NULL
+    #
+    #
+    return(1)
   })
-  return(list(best.model = best.model, best.error = best.error,
-              best.model.all = best.model.all, best.error.all = best.error.all,
+  return(list(best.model.inliers.inliers.ydata = best.model.inliers.inliers.ydata,
+              best.error.inliers.inliers.ydata = best.error.inliers.inliers.ydata,
+              #
+              best.model.inliers.all.ydata = best.model.inliers.all.ydata,
+              best.error.inliers.all.ydata = best.error.inliers.all.ydata,
+              #
+              best.model.all.inliers.all.ydata = best.model.all.inliers.all,
+              best.error.all.inliers.all.ydata = best.error.all.inliers.all,
+              #
+              best.model.all.inliers.model.inliers = best.model.all.inliers.model.inliers,
+              best.error.all.inliers.model.inliers = best.error.all.inliers.model.inliers,
+              #
+              best.model.all.inliers.consensus = best.model.all.inliers.consensus,
+              best.error.all.inliers.consensus = best.error.all.inliers.consensus,
+              #
               errors = error.array ))
+}
+
+
+#' Choose model with higher consensus set
+#'
+#' @param family
+#' @param el.error
+#' @param el.model
+#' @param best.model
+#' @param best.error
+#'
+#' @return
+#'
+#' @examples
+higher.consensus <- function(family.fun, el.error, el.model, best.error, best.model) {
+  if (length(best.model) == 1 && is.na(best.model)) {
+    best.nobs <- 0
+  } else {
+    best.nobs <- family.fun$nobs(best.model)
+  }
+  el.nobs   <- family.fun$nobs(el.model)
+  if (!is.null(el.error) && !is.null(el.model) &&
+      (best.nobs < el.nobs || (best.nobs == el.nobs && el.error < best.error))) {
+    return(list(best.model = el.model,
+                best.error = el.error))
+  } else {
+    return(NULL)
+  }
+}
+
+#' Choose model with lower loss
+#'
+#' @param el.error
+#' @param el.model
+#' @param best.model
+#' @param best.error
+#'
+#' @return
+#'
+#' @examples
+lower.loss <- function(el.error, el.model, best.error, best.model) {
+  if (!is.null(el.error) && !is.null(el.model) && el.error < best.error) {
+    return(list(best.model = el.model,
+                best.error = el.error))
+  } else {
+    return(NULL)
+  }
 }

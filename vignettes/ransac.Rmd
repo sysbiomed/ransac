@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r libraries, include = FALSE}
-devtools::load_all('.')
+library(ransac)
 library(ggplot2)
 library(parallel)
 library(ggbeeswarm)
@@ -25,7 +25,8 @@ generate.cache.name <- function(name) {
                         k, n, threshold, 
                         good.fit.perct, 
                         my.seed, 
-                        my.data$name)
+                        data.name,
+                        family)
   cache.name <- file.path('cache', gsub('[ /]', '_', cache.name))
 }
 ```
@@ -42,27 +43,23 @@ flog.appender(appender.tee('logger.txt'))
 flog.threshold(DEBUG)
 ```
 
-## Load UCLA data if not already available
+## Load BRCA data with 2 co-variates
 
 ```{r brca_data}
 #
 if (!exists('xdata') || !exists('ydata')) {
-  #my.data <- dataset.ucla()
-  # my.data <- dataset.brca.tumor.normal()
-  my.data <- dataset.brca.tumor.normal.2()
-  # my.data <- dataset.brca.tnbc(glmnet.alpha = 0.7, mc.cores = 10)
-  xdata <- my.data$xdata
-  ydata <- my.data$ydata
+  genes <- c("ENSG00000072778","ENSG00000235505")
+  load('BRCA.data.norm.RData')
+  xdata <- BRCA.data.norm[,genes]
+  ydata <- data.Y
+  colnames(ydata) <- 'logit_class'
+  data.name <- 'BRCA (2 co-variates)'
+
 }
 
-flog.info(paste0('Description of \'%s\' dataset:\n',
-              '        cases: %d\n',
-              '   class == 1: %d\n',
-              '   class == 0: %d\n',
-              '---------------------\n',
-              '  co-variates: %d'),
-          my.data$name, nrow(xdata), sum(ydata == 1), sum(ydata == 0),
-          ncol(xdata))
+flog.info(paste0('Description of \'%s\' dataset:\n', '        cases: %d\n', '   class == 1: %d\n',
+              '   class == 0: %d\n', '---------------------\n', '  co-variates: %d'),
+          data.name, nrow(xdata), sum(ydata == 1), sum(ydata == 0),  ncol(xdata))
 ```
 
 ### Show SD of features
@@ -83,32 +80,26 @@ levels(xdata.melt$feature.short) <- gsub('ENSG0+','', levels(xdata.melt$feature)
 g <- ggplot(xdata.melt, aes(feature.short, value)) + theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, face = 'italic', hjust = 0, vjust = .5)) + xlab('Feature') + 
   geom_boxplot(notch = TRUE, varwidth = TRUE, colour = my.colors(1), outlier.colour = my.colors(5), outlier.shape = 1)
-g + scale_y_continuous(trans = 'log1p') + ylab('Value (log1p scale)')
+# g + scale_y_continuous(trans = 'log1p') + ylab('Value (log1p scale)')
 g + ylab('Value (no scale)')
 
 ```
 
 
-## Test run with n = 30
+## Running with k = 5000
 
 ```{r set seed and parameters}
-# parameters
-n              <- 30
-threshold      <- .35^2
-good.fit.perct <- .80
 # seed to make this reproducible
-my.seed        <- 209
 RNGkind("L'Ecuyer-CMRG")
 
-# cores
-mc.cores <- 16
-
-#
-if (exists('force.k')) {
-  k <- force.k 
-} else {
-  k <- 1000
-}
+# Parameters
+if (exists('force.k'))    { n <- force.n }                 else { n <- 30 }
+if (exists('force.k'))    { k <- force.k }                 else { k <- 100 }
+if (exists('force.seed')) { my.seed <- force.seed }        else { my.seed <- 209 }
+if (exists('force.thre')) { threshold <- force.thre }      else { threshold <- .35^2 }
+if (exists('force.good')) { good.fit.perct <- force.good } else { good.fit.perct <- .8 }
+if (exists('force.fami')) { family <- force.fami }         else { family <- 'binomial.glm' }
+if (exists('force.core')) { mc.cores <- force.core }       else { mc.cores <- 16 }
 ```
 
 ### Description of parameters
@@ -126,7 +117,7 @@ flog.info(paste0('Description of parameters:\n',
 ```
 
 
-### Ransac with original data
+### RANSAC with the original data
 
 ```{r test}
 set.seed(my.seed)
@@ -138,22 +129,26 @@ if (file.exists(cache.name)) {
 } else {
   results.ransac <- ransac(xdata, ydata, n = n, threshold = threshold, 
                            good.fit.perct = good.fit.perct, 
-                           k = k, family = 'binomial', mc.cores = mc.cores,
-                           nlambda = 100, alpha = 0.5)
+                           k = k, family = family, mc.cores = mc.cores,
+                           nlambda = 100, alpha = 0)
+  flog.info('Saving cache to disk (%s)', cache.name)
   save(results.ransac, file = cache.name)
 }
-print.ransac.results(results.ransac, xdata, ydata, family = 'binomial', 'Original data')
+print.ransac.results(results.ransac, xdata, ydata, family = family, name = 'Original data', nlambda = 100)
 ```
 
-### Ransac with perturbation in first 10 and last 10
+### RAMSAC with perturbation in first 10 and last 10
 
 ```{r test_perturbation}
 set.seed(my.seed)
 #
 ydata.pert <- ydata
+ix.marta <- c(23,26,29,35,41,44,54,79,84,91,98,116,129,136,154,155,161,183,187,218)
+ydata.pert[ix.marta] <- (ydata.pert[ix.marta] - 1) * -1
 len <- length(ydata)
-ydata.pert[sample(which(ydata == 1),10)] <- 0
-ydata.pert[sample(which(ydata == 0),10)] <- 1
+#
+#ydata.pert[sample(which(ydata == 1),10)] <- 0
+#ydata.pert[sample(which(ydata == 0),10)] <- 1
 #
 cache.name <- generate.cache.name('results.ransac.pert')
 if (file.exists(cache.name)) {
@@ -161,30 +156,29 @@ if (file.exists(cache.name)) {
 } else {
   results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
                                 good.fit.perct = good.fit.perct, k = k,
-                                family = 'binomial', mc.cores = mc.cores,
-                                nlambda = 100, alpha = 0.5)
+                                family = family, mc.cores = mc.cores,
+                                nlambda = 100, alpha = 0)
+  flog.info('Saving cache to disk (%s)', cache.name)
   save(results.ransac.pert, file = cache.name)
 }
-print.ransac.results(results.ransac.pert, xdata, ydata.pert, family = 'binomial', 'With perturbation')
-```
-
-
-
-```{r, eval = F}
-for (ix in 1:2000) {
-  results.ransac$errors[[ix]]$this.model <- NULL
-}
-rmse <- sapply(1:2000,function(ix) {
-  res <- sqrt(mean(ydata - predict(results.ransac$errors[[ix]]$this.model, newx = xdata, s = 'lambda.min', type = 'response'))^2)
-  if (is.null(res)) {
-    flog.info('problem with ix %d', ix)
-  }
-  return(res)
-})
-new.best.model <- results.ransac$errors[[which(rmse == min(rmse))]]$this.model
+print.ransac.results(results.ransac.pert, xdata, ydata.pert, 
+                     family = family, 
+                     name = 'With perturbation, error: ydata_perturbation - ydata_predicted')
 #
-results.ransac$best.error.all <- sqrt(mean(ydata - predict(new.best.model, newx = xdata, s = 'lambda.min', type = 'response'))^2) 
-
-results.ransac$best.model.all <- new.best.model
 ```
+
+#### How well does it recover the original data
+
+From the dataset with perturbation, i.e.:
+
+- Trained with dirty dataset
+- Tested agains original
+
+```{r recover_it}
+print.ransac.results(results.ransac.pert, xdata, ydata, ydata.original = ydata.pert,
+                     family = family, 
+                     name = 'With perturbation, error: ydata_original_class - ydata_predicted')
+```
+
+
 

@@ -1,15 +1,25 @@
 
+
+
 family.binomial <- function() {
   #
   #
   # Functions
 
+  nobs.fun <- function(model) {
+    return(model$glmnet.fit$nobs)
+  }
+
   # take valid sample
-  sample.fun = function(ydata, n, total.nruns = 1000, min.el = 8) {
+  sample.fun <- function(ydata, n, total.nruns = 1000, min.el = 8) {
     min.ix.count <- 0
     min.ix       <- NULL
     for (nrun in seq(total.nruns)) {
-      ix                <- sample(seq(length(ydata)), n)
+      ydata.size <- nrow(ydata)
+      if (is.null(ydata.size)) {
+        ydata.size <- length(ydata)
+      }
+      ix                <- sample(seq(ydata.size), n)
       count.table       <- table(ydata[ix])
       min.ix.count.temp <- min(count.table)
       if (length(count.table) >= 2){
@@ -29,22 +39,27 @@ family.binomial <- function() {
   }
 
   # Squared Error
-  error.fun = function(ydata.predicted, ydata) {
+  error.fun <- function(ydata.predicted, ydata) {
     return((ydata.predicted - ydata)^2)
   }
 
   # prediction function
-  predict.fun = function(object, newx) {
+  coef.fun <- function(object) {
+    coef(object = object, s = 'lambda.min')
+  }
+
+  # prediction function
+  predict.fun <- function(object, newx) {
     predict(object = object, newx = newx, s = 'lambda.min', type = 'response')
   }
 
   # Using RMSE
-  model.error.fun = function(ydata.predicted, ydata) {
+  model.error.fun <- function(ydata.predicted, ydata) {
     mean(sqrt(error.fun(ydata.predicted, ydata)))
   }
 
   # fitting model
-  fit.fun <- function(xdata, ydata, alpha = 0, nlambda = NULL, mc.cores = 1) {
+  fit.fun <- function(xdata, ydata, mc.cores = 1, alpha = 0, nlambda = NULL) {
     # generate balanced folds for the cross-validation
 
     # get index of each class
@@ -105,6 +120,10 @@ family.binomial <- function() {
     # fitting model
     fit.model = fit.fun,
     # sample function
-    sample = sample.fun))
+    sample = sample.fun,
+    # get observations used in model
+    nobs = nobs.fun,
+    #
+    coef = coef.fun))
 }
 
