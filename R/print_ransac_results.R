@@ -1,3 +1,19 @@
+#' Function to print the results from RANSAC
+#'
+#' @param results.ransac
+#' @param xdata
+#' @param ydata
+#' @param family
+#' @param name
+#' @param ydata.original
+#' @param show.title
+#' @param only_consensus
+#' @param ...
+#'
+#' @return
+#' @export
+#'
+#' @examples
 print.ransac.results <- function(results.ransac, xdata, ydata,
                                  family = 'binomial', name = '', ydata.original = NULL, show.title = T,
                                  only_consensus = T, ...) {

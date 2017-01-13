@@ -1,6 +1,14 @@
 
 
 
+#' Support glmnet logistic regression
+#'
+#' Uses the binomial distribution
+#'
+#' @return
+#' @export
+#'
+#' @examples
 family.binomial <- function() {
   #
   #
