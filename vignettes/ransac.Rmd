@@ -10,7 +10,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r libraries, include = FALSE}
+```{r libraries, include=FALSE}
 library(ransac)
 library(ggplot2)
 library(parallel)
@@ -35,10 +35,10 @@ generate.cache.name <- function(name) {
 
 Setup logging
 
-```{r ransac_function}
+```{r ransac_function, echo = F}
 #
 # setup logger
-flog.layout(layout.simple.parallel)
+flog.layout(layout.simple)
 flog.appender(appender.tee('logger.txt'))
 flog.threshold(DEBUG)
 ```
@@ -94,7 +94,7 @@ RNGkind("L'Ecuyer-CMRG")
 
 # Parameters
 if (exists('force.k'))    { n <- force.n }                 else { n <- 30 }
-if (exists('force.k'))    { k <- force.k }                 else { k <- 100 }
+if (exists('force.k'))    { k <- force.k }                 else { k <- 5000 }
 if (exists('force.seed')) { my.seed <- force.seed }        else { my.seed <- 209 }
 if (exists('force.thre')) { threshold <- force.thre }      else { threshold <- .35^2 }
 if (exists('force.good')) { good.fit.perct <- force.good } else { good.fit.perct <- .8 }
@@ -132,9 +132,9 @@ if (file.exists(cache.name)) {
                            k = k, family = family, mc.cores = mc.cores,
                            nlambda = 100, alpha = 0)
   flog.info('Saving cache to disk (%s)', cache.name)
-  save(results.ransac, file = cache.name)
+  save(results.ransac, xdata, ydata, family, data.name, file = cache.name)
 }
-print.ransac.results(results.ransac, xdata, ydata, family = family, name = 'Original data', nlambda = 100)
+plot(results.ransac, xdata, ydata, family = family, name = 'Original data', nlambda = 100)
 ```
 
 ### RAMSAC with perturbation in first 10 and last 10
@@ -152,6 +152,7 @@ len <- length(ydata)
 #
 cache.name <- generate.cache.name('results.ransac.pert')
 if (file.exists(cache.name)) {
+  flog.info('Loading cached ransac from %s', cache.name)
   load(cache.name)
 } else {
   results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
@@ -159,11 +160,11 @@ if (file.exists(cache.name)) {
                                 family = family, mc.cores = mc.cores,
                                 nlambda = 100, alpha = 0)
   flog.info('Saving cache to disk (%s)', cache.name)
-  save(results.ransac.pert, file = cache.name)
+  save(results.ransac.pert, xdata, ydata, ydata.pert, family, file = cache.name)
 }
-print.ransac.results(results.ransac.pert, xdata, ydata.pert, 
-                     family = family, 
-                     name = 'With perturbation, error: ydata_perturbation - ydata_predicted')
+plot(results.ransac.pert, xdata, ydata.pert, 
+     family = family, 
+     name = 'With perturbation, error: ydata_perturbation - ydata_predicted')
 #
 ```
 
@@ -175,9 +176,9 @@ From the dataset with perturbation, i.e.:
 - Tested agains original
 
 ```{r recover_it}
-print.ransac.results(results.ransac.pert, xdata, ydata, ydata.original = ydata.pert,
-                     family = family, 
-                     name = 'With perturbation, error: ydata_original_class - ydata_predicted')
+plot(results.ransac.pert, xdata, ydata, ydata.original = ydata.pert,
+     family = family, 
+     name = 'With perturbation, error: ydata_original_class - ydata_predicted')
 ```
 
 

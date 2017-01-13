@@ -14,15 +14,15 @@
 #' @export
 #'
 #' @examples
-print.ransac.results <- function(results.ransac, xdata, ydata,
-                                 family = 'binomial', name = '', ydata.original = NULL, show.title = T,
-                                 only_consensus = T, ...) {
+plot.ransac <- function(results.ransac, xdata, ydata,
+                        family = 'binomial', name = '', ydata.original = NULL, show.title = T,
+                        only_consensus = T, ...) {
   #
   # retrieve family by name
   if (is.character(family)) {
     family.fun <- switch(family,
-                         binomial = family.binomial(),
-                         binomial.glm = family.binomial.glm())
+                         binomial = ransac.binomial(),
+                         binomial.glm = ransac.binomial.glm())
   } else {
     family.fun <- family
   }

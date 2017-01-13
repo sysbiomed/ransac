@@ -22,8 +22,8 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
   # retrieve family by name
   if (is.character(family)) {
     family.fun <- switch(family,
-                         binomial = family.binomial(),
-                         binomial.glm = family.binomial.glm())
+                         binomial = ransac.binomial(),
+                         binomial.glm = ransac.binomial.glm())
   } else {
     family.fun <- family
   }
@@ -218,22 +218,25 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     #
     return(1)
   })
-  return(list(best.model.inliers.inliers.ydata = best.model.inliers.inliers.ydata,
-              best.error.inliers.inliers.ydata = best.error.inliers.inliers.ydata,
-              #
-              best.model.inliers.all.ydata = best.model.inliers.all.ydata,
-              best.error.inliers.all.ydata = best.error.inliers.all.ydata,
-              #
-              best.model.all.inliers.all.ydata = best.model.all.inliers.all,
-              best.error.all.inliers.all.ydata = best.error.all.inliers.all,
-              #
-              best.model.all.inliers.model.inliers = best.model.all.inliers.model.inliers,
-              best.error.all.inliers.model.inliers = best.error.all.inliers.model.inliers,
-              #
-              best.model.all.inliers.consensus = best.model.all.inliers.consensus,
-              best.error.all.inliers.consensus = best.error.all.inliers.consensus,
-              #
-              errors = error.array ))
+  result <- list(best.model.inliers.inliers.ydata = best.model.inliers.inliers.ydata,
+                 best.error.inliers.inliers.ydata = best.error.inliers.inliers.ydata,
+                 #
+                 best.model.inliers.all.ydata = best.model.inliers.all.ydata,
+                 best.error.inliers.all.ydata = best.error.inliers.all.ydata,
+                 #
+                 best.model.all.inliers.all.ydata = best.model.all.inliers.all,
+                 best.error.all.inliers.all.ydata = best.error.all.inliers.all,
+                 #
+                 best.model.all.inliers.model.inliers = best.model.all.inliers.model.inliers,
+                 best.error.all.inliers.model.inliers = best.error.all.inliers.model.inliers,
+                 #
+                 best.model.all.inliers.consensus = best.model.all.inliers.consensus,
+                 best.error.all.inliers.consensus = best.error.all.inliers.consensus,
+                 #
+                 errors = error.array )
+  #
+  class(result) <- 'ransac'
+  return(result)
 }
 
 

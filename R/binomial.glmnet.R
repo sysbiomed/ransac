@@ -9,7 +9,7 @@
 #' @export
 #'
 #' @examples
-family.binomial <- function() {
+ransac.binomial <- function() {
   #
   #
   # Functions
