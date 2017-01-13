@@ -3,6 +3,5 @@
 S3method(family,binomial)
 S3method(family,binomial.glm)
 S3method(print,ransac.results)
-export(dataset.brca.tnbc)
 export(dataset.ucla)
 export(ransac)

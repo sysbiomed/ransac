@@ -9,8 +9,7 @@ Description: RANdom SAmple Consensus (RANSAC) method for the logistics
 License: GNU GPL v3
 Depends:
     glmnet,
-    futile.logger,
-    brca.data
+    futile.logger
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 5.0.1
