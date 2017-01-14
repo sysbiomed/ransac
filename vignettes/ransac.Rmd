@@ -18,7 +18,16 @@ library(ggbeeswarm)
 library(reshape2)
 library(verissimo)
 library(futile.logger)
+#
+# setup logger
+flog.layout(layout.simple)
+flog.appender(appender.tee('logger.txt'))
+flog.threshold(DEBUG)
+```
 
+## Functions 
+
+```{r ransac_function}
 generate.cache.name <- function(name) {
   cache.name <- sprintf('%s-%d-%d-%d-%d-%f-%f-%d-%s.RData', 
                         name, nrow(xdata), ncol(xdata),
@@ -29,18 +38,6 @@ generate.cache.name <- function(name) {
                         family)
   cache.name <- file.path('cache', gsub('[ /]', '_', cache.name))
 }
-```
-
-## Functions 
-
-Setup logging
-
-```{r ransac_function, echo = F}
-#
-# setup logger
-flog.layout(layout.simple)
-flog.appender(appender.tee('logger.txt'))
-flog.threshold(DEBUG)
 ```
 
 ## Load BRCA data with 2 co-variates
@@ -167,19 +164,4 @@ plot(results.ransac.pert, xdata, ydata.pert,
      name = 'With perturbation, error: ydata_perturbation - ydata_predicted')
 #
 ```
-
-#### How well does it recover the original data
-
-From the dataset with perturbation, i.e.:
-
-- Trained with dirty dataset
-- Tested agains original
-
-```{r recover_it}
-plot(results.ransac.pert, xdata, ydata, ydata.original = ydata.pert,
-     family = family, 
-     name = 'With perturbation, error: ydata_original_class - ydata_predicted')
-```
-
-
 

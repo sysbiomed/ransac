@@ -7,7 +7,7 @@ Maintainer: André Veríssimo <andre.verissimo@tecnico.ulisboa.pt>
 Description: RANdom SAmple Consensus (RANSAC) method for the logistics
     regression.
 License: GNU GPL v3
-Depends:
+Imports:
     glmnet,
     futile.logger, 
     ggbeeswarm, 
