@@ -9,129 +9,79 @@
 #' @export
 #'
 #' @examples
-ransac.binomial <- function() {
+ransac.binomial.glmnet <- function() {
   #
   #
   # Functions
 
+  # Number of observation in model
   nobs.fun <- function(model) {
-    return(model$glmnet.fit$nobs)
+    return(model$nobs)
   }
 
-  # take valid sample
-  sample.fun <- function(ydata, n, total.nruns = 1000, min.el = 8) {
-    min.ix.count <- 0
-    min.ix       <- NULL
-    for (nrun in seq(total.nruns)) {
-      ydata.size <- nrow(ydata)
-      if (is.null(ydata.size)) {
-        ydata.size <- length(ydata)
-      }
-      ix                <- sample(seq(ydata.size), n)
-      count.table       <- table(ydata[ix])
-      min.ix.count.temp <- min(count.table)
-      if (length(count.table) >= 2){
-        if (min.ix.count.temp >= min.el) {
-          return(ix)
-        } else if (min.ix.count.temp > min.ix.count) {
-          min.ix       <- ix
-          min.ix.count <- min.ix.count.temp
-        }
-      }
-    }
-    if (min(table(ydata[ix])) < 5) {
-      stop('Could not find a good sample from dataset after.')
-    }
-    flog.warn('One class does not have minimum of 8 samples, it has %d', min.ix.count)
-    return(min.ix)
+  # Compare Threshold
+  threshold.cmp.fun <- function(error, threshold) {
+    return(error <= threshold)
   }
 
   # Squared Error
-  error.fun <- function(ydata.predicted, ydata) {
-    return((ydata.predicted - ydata)^2)
+  error.fun <- function(ydata, ydata.predicted) {
+    return((ydata - ydata.predicted)^2)
   }
 
-  # prediction function
-  coef.fun <- function(object) {
-    coef(object = object, s = 'lambda.min')
+  # Get Coefficients function
+  coef.fun <- function(object, lambda, ...) {
+    coef(object = object, s = lambda)
   }
 
-  # prediction function
-  predict.fun <- function(object, newx) {
-    predict(object = object, newx = newx, s = 'lambda.min', type = 'response')
+  # Prediction function
+  predict.fun <- function(object, newx, lambda, ...) {
+    predict(object = object, newx = newx, s = lambda, type = 'response')
   }
 
   # Using RMSE
-  model.error.fun <- function(ydata.predicted, ydata) {
-    mean(sqrt(error.fun(ydata.predicted, ydata)))
+  model.error.fun <- function(ydata, ydata.predicted) {
+    mean(sqrt(error.fun(ydata, ydata.predicted)))
   }
 
-  # fitting model
-  fit.fun <- function(xdata, ydata, mc.cores = 1, alpha = 0, nlambda = NULL) {
-    # generate balanced folds for the cross-validation
+  # Fitting model
+  fit.fun <- function(xdata, ydata, lambda, alpha = 0, penalty.factor = array(1, ncol(xdata)),
+                      ...) {
+    # need more than one lambda to guarantee convergence
+    lambda.v <- sort(c(1000,100, 10, c(50, 10, 5, 4, 3, 2, 1.5, 1) * lambda), decreasing = T)
 
-    # get index of each class
-    ydata.class.0 <- which(ydata == levels(factor(ydata))[1])
-    ydata.class.1 <- which(ydata == levels(factor(ydata))[2])
-    # calculate folds for each class
-    out.balanced <- balanced.cv.folds(ydata.class.0, ydata.class.1, 10)
-    # join them
-    foldid <- array(0,length(ydata))
-    foldid[ydata.class.0] <- out.balanced$output[[1]]
-    foldid[ydata.class.1] <- out.balanced$output[[2]]
     # need to suppress wanrings
-    if (is.null(nlambda)) {
-      # little regularization
-      if (any(names(formals(get("cv.glmnet"))) == 'mc.cores')){
-        # https://github.com/averissimo/rpackage-glmnet
-        #  that uses parallel package instead
-        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
-                                          foldid = foldid,
-                                          family = 'binomial',
-                                          lambda = c(1e-9, 1e-7, 1e-5, 1e-3, 1e-1),
-                                          mc.cores = mc.cores)))
-      } else {
-        # CRAN's glmnet package
-        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
-                                          foldid = foldid,
-                                          family = 'binomial',
-                                          lambda = c(0,1e-7, 1e-5, 1e-3, 1e-1))))
-      }
-    } else {
-      # normal regularization
-      if (any(names(formals(get("cv.glmnet"))) == 'mc.cores')){
-        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
-                                          foldid = foldid,
-                                          family = 'binomial',
-                                          nlambda = nlambda,
-                                          mc.cores = mc.cores)))
-      } else {
-        # CRAN's glmnet package
-        return(suppressWarnings(cv.glmnet(xdata, ydata, alpha = alpha,
-                                          foldid = foldid,
-                                          family = 'binomial',
-                                          nlambda = nlambda)))
-      }
-    }
+    return(suppressWarnings(glmnet(xdata, ydata,
+                                   alpha = alpha,
+                                   family = 'binomial',
+                                   lambda = lambda.v,
+                                   standardize = F,
+                                   penalty.factor = penalty.factor)))
     #
   }
 
-  #
+  parent.family <- ransac.binomial.glm()
   #
   return(list(
     # Squared error
-    error = error.fun,
+    error = parent.family$error,
     # prediction function
     predict = predict.fun,
     # Using RMSE
-    model.error = model.error.fun,
+    model.error = parent.family$model.error,
     # fitting model
     fit.model = fit.fun,
     # sample function
-    sample = sample.fun,
+    sample = parent.family$sample,
     # get observations used in model
     nobs = nobs.fun,
-    #
-    coef = coef.fun))
+    # Get coefficients from model
+    coef = coef.fun,
+    # threshold comparison
+    threshold.cmp = threshold.cmp.fun,
+    # Model Error function name
+    model.error.type = 'RMSE',
+    # Error function name
+    error.type = 'Squared error'))
 }
 

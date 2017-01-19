@@ -3,5 +3,6 @@
 S3method(plot,ransac)
 export(dataset.ucla)
 export(ransac)
-export(ransac.binomial)
 export(ransac.binomial.glm)
+export(ransac.binomial.glmnet)
+export(ransac.binomial.glmnet.auc)

@@ -16,52 +16,54 @@ ransac.binomial.glm <- function() {
     return(length(model$y))
   }
 
-  # take valid sample
-  sample.fun <- function(ydata, n, total.nruns = 1000, min.el = 8) {
-    min.ix.count <- 0
-    min.ix       <- NULL
-    for (nrun in seq(total.nruns)) {
-      ydata.size <- nrow(ydata)
-      if (is.null(ydata.size)) {
-        ydata.size <- length(ydata)
-      }
-      ix                <- sample(seq(ydata.size), n)
-      count.table       <- table(ydata[ix])
-      min.ix.count.temp <- min(count.table)
-      if (length(count.table) >= 2){
-        if (min.ix.count.temp >= min.el) {
-          return(ix)
-        } else if (min.ix.count.temp > min.ix.count) {
-          min.ix       <- ix
-          min.ix.count <- min.ix.count.temp
-        }
-      }
+  # Take valid sample
+  sample.fun     <- function(ydata, n, min.el = n/3) {
+    ydata.factor <- factor(ydata)
+    ydata.ix     <- seq_along(ydata)
+    equal.list   <- list()
+    equal.len    <- list()
+    for(cl in levels(ydata.factor)) {
+      equal.list[[cl]] <- ydata.ix[ydata.factor == cl]
+      equal.len[[cl]]  <- length(equal.list[[cl]])
     }
-    if (min(table(ydata[ix])) < 5) {
-      stop('Could not find a good sample from dataset after.')
+    min.len.ix <- levels(ydata.factor)[sort(unlist(equal.len), index.return = T)$ix[1]]
+
+    if (equal.len[[min.len.ix]] < min.el) {
+      warning(sprintf('Cannot get a sample with at least %d elements', min.el))
     }
-    flog.warn('One class does not have minimum of 8 samples, it has %d', min.ix.count)
-    return(min.ix)
+    #
+    out.ix <- c()
+    for(cl in levels(ydata.factor)) {
+      out.ix <- c(out.ix, sample(equal.list[[cl]], min.el))
+    }
+    out.ix <- c(out.ix, sample(ydata.ix[-out.ix], n - length(out.ix)))
+    #
+    return(sort(out.ix))
+  }
+
+  # Compare Threshold
+  threshold.cmp.fun <- function(error, threshold) {
+    return(error <= threshold)
   }
 
   # Squared Error
-  error.fun <- function(ydata.predicted, ydata) {
-    return((ydata.predicted - ydata)^2)
+  error.fun <- function(ydata, ydata.predicted) {
+    return((ydata - ydata.predicted)^2)
   }
 
   # prediction function
-  coef.fun <- function(object) {
+  coef.fun <- function(object, ...) {
     coef(object = object)
   }
 
   # prediction function
-  predict.fun <- function(object, newx) {
+  predict.fun <- function(object, newx, ...) {
     predict(object = object, newdata = data.frame(newx), type = 'response')
   }
 
   # Using RMSE
-  model.error.fun <- function(ydata.predicted, ydata) {
-    mean(sqrt(error.fun(ydata.predicted, ydata)))
+  model.error.fun <- function(ydata, ydata.predicted) {
+    mean(sqrt(error.fun(ydata, ydata.predicted)))
   }
 
   # fitting model
@@ -90,7 +92,13 @@ ransac.binomial.glm <- function() {
     sample = sample.fun,
     # get observations used in model
     nobs = nobs.fun,
-    #
-    coef = coef.fun))
+    # Get Coefficients from model
+    coef = coef.fun,
+    # Compare error with threshold
+    threshold.cmp = threshold.cmp.fun,
+    # Model Error function name
+    model.error.type = 'RMSE',
+    # Error function name
+    error.type = 'Squared error'))
 }
 

@@ -22,8 +22,9 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
   # retrieve family by name
   if (is.character(family)) {
     family.fun <- switch(family,
-                         binomial = ransac.binomial(),
-                         binomial.glm = ransac.binomial.glm())
+                         binomial.glmnet     = ransac.binomial.glmnet(),
+                         binomial.glmnet.auc = ransac.binomial.glmnet.auc(),
+                         binomial.glm        = ransac.binomial.glm())
   } else {
     family.fun <- family
   }
@@ -31,26 +32,28 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     stop('family is not well defined, see documentation')
   }
   #
-  flog.debug(paste0('Starting ransac with:\n',
-                    '  k: %d\n',
-                    '  n: %d\n',
-                    '  threshold: %f\n',
-                    '  good.fit.perct: %.2f'),
-             k, n, threshold, good.fit.perct)
+  flog.debug('Starting ransac with:')
+  flog.debug('                 k: %d', k)
+  flog.debug('                 n: %d', n)
+  flog.debug('         threshold: %f', threshold)
+  flog.debug('    good.fit.perct: %.2f', good.fit.perct)
+  flog.debug('     loss function: %s', family.fun$error.type)
+  flog.debug('  model evaluation: %s', family.fun$model.error.type)
   #
   # Using parallel computing to speed up
   error.array <- mclapply(seq(k), function(ix) {
     flog.debug('%d / %d iteration', ix, k)
     #
     # draw a random sample from the dataset with size n
-    xdata.min.ix <- family.fun$sample(ydata, n)
+    xdata.min.ix <- family.fun$sample(ydata, n, min.el = n/3)
     xdata.min <- xdata[xdata.min.ix, ]
     ydata.min <- ydata[xdata.min.ix]
+    penalty.factor.min <- penalty.factor[xdata.min.ix]
     #
     flog.debug('  ydata table: %d / %d (class 0 / class 1)', sum(ydata.min == 0), sum(ydata.min == 1))
     #
     # fit the model using the random sample
-    inliers.model <- family.fun$fit.model(xdata.min, ydata.min, mc.cores = 1, ...)
+    inliers.model <- family.fun$fit.model(xdata.min, ydata.min, ...)
     flog.debug('  finished the fitting %d', ix)
     #
     # test all the observations outside the random dataset
@@ -58,62 +61,75 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     test.inliners.ix <- seq(nrow(xdata))[-xdata.min.ix]
     # TODO: drop the sapply and do this with matrices
     res <- sapply(test.inliners.ix, function(test.ix) {
-      my.prediction <- family.fun$predict(object = inliers.model, newx = t(xdata[test.ix,]))
-      family.fun$error(my.prediction, ydata[test.ix]) < threshold
+      my.prediction <- family.fun$predict(object = inliers.model, newx = t(xdata[test.ix,]), ...)
+      return(family.fun$threshold.cmp(family.fun$error(ydata[test.ix], my.prediction), threshold))
     })
     also.inliners.ix <- test.inliners.ix[res]
-    flog.debug('  also inliners: %d + %d = %d / %d (%.2f)',
+    flog.debug('  also inliners (needs minimum of %.2f / %d): %d + %d = %d',
+               good.fit.perct * nrow(xdata),
+               nrow(xdata),
                length(also.inliners.ix),
                nrow(xdata.min),
-               length(also.inliners.ix) + nrow(xdata.min),
-               nrow(xdata),
-               good.fit.perct * nrow(xdata))
+               length(also.inliners.ix) + nrow(xdata.min))
     #
     # Check if the model is good
     if (length(also.inliners.ix) + nrow(xdata.min) >= nrow(xdata) * good.fit.perct) {
       # this implies that we may have found a good model
       #  now test how good it is
-      xdata.ix     <- c(also.inliners.ix, xdata.min.ix)
+      xdata.ix     <- sort(c(also.inliners.ix, xdata.min.ix))
 
       #
       #
       # Calculating loss with original model fitted with n observations
 
       # only inliers + maybe.inliers
-      my.residuals                      <- family.fun$predict(object = inliers.model, newx = xdata[xdata.ix,])
-      error.inliers.model.inliers.ydata <- family.fun$model.error(ydata[xdata.ix], my.residuals)
+      my.residuals                      <- family.fun$predict(object = inliers.model, newx = xdata[xdata.ix,], ...)
+      error.inliers.model.inliers.ydata <- family.fun$model.error(my.residuals, ydata[xdata.ix])
 
       # with all xdata
-      my.residuals                    <- family.fun$predict(object = inliers.model, newx = xdata)
-      error.inliers.model.all.ydata   <- family.fun$model.error(ydata, my.residuals)
+      my.residuals                    <- family.fun$predict(object = inliers.model, newx = xdata, ...)
+      error.inliers.model.all.ydata   <- family.fun$model.error(my.residuals, ydata)
 
       #
       #
       # Calculating loss with refitted model with inliers + maybe.inliers
 
       # Re-estimating model
-      all.inliers.model <- family.fun$fit.model(xdata[xdata.ix,], ydata[xdata.ix], mc.cores = 1, ...)
+      all.inliers.model <- family.fun$fit.model(xdata[xdata.ix,], ydata[xdata.ix],
+                                                penalty.factor.min = penalty.factor.min[xdata.ix],
+                                                ...)
 
       # only inliers + maybe.inliers
-      my.residuals                    <- family.fun$predict(object = all.inliers.model, newx = xdata[xdata.ix,])
-      error.all.inliers.model.inliers <- family.fun$model.error(ydata[xdata.ix], my.residuals)
+      my.residuals                    <- family.fun$predict(object = all.inliers.model, newx = xdata[xdata.ix,], ...)
+      error.all.inliers.model.inliers <- family.fun$model.error(my.residuals, ydata[xdata.ix])
 
       # with all xdata
-      my.residuals                      <- family.fun$predict(object = all.inliers.model, newx = xdata)
-      error.all.inliers.model.all.ydata <- family.fun$model.error(ydata, my.residuals)
+      my.residuals                      <- family.fun$predict(object = all.inliers.model, newx = xdata, ...)
+      error.all.inliers.model.all.ydata <- family.fun$model.error(my.residuals, ydata)
 
       #
-      flog.debug(paste0('  %d / %d good fit!! There are %d total inliers Loss:\n',
-                        '   initial model with inliers only: %f\n',
-                        '       initial model with all data: %f\n',
-                        '  refitted model with inliers only: %f\n',
-                        '      refitted model with all data: %f'),
+      flog.debug(paste0('  %d / %d good fit!!\n  There are %d total inliers:\n',
+                        '                       Loss function: %s\n',
+                        '             Model evaluation metric: %s\n',
+                        '--------------------------------------------------\n',
+                        '     initial model with inliers only: %g\n',
+                        '         initial model with all data: %g\n',
+                        '    refitted model with inliers only: %g\n',
+                        '        refitted model with all data: %g\n',
+                        '----------- Number of variables in Models -------\n',
+                        '         how many variables in data?: %d \n',
+                        '                     initial inliers: %d \n',
+                        '                         all inliers: %d'),
                  ix, k,
                  length(xdata.ix),
+                 family.fun$error.type, family.fun$model.error.type,
                  error.inliers.model.inliers.ydata,
                  error.inliers.model.all.ydata,
                  error.all.inliers.model.inliers,
-                 error.all.inliers.model.all.ydata)
+                 error.all.inliers.model.all.ydata,
+                 ncol(xdata),
+                 sum(family.fun$coef(inliers.model, ...)[-1] != 0),
+                 sum(family.fun$coef(all.inliers.model, ...)[-1] != 0))
       #
       return(list(inliers.model     = inliers.model,
                   all.inliers.model = all.inliers.model,
@@ -218,22 +234,19 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     #
     return(1)
   })
-  result <- list(best.model.inliers.inliers.ydata = best.model.inliers.inliers.ydata,
-                 best.error.inliers.inliers.ydata = best.error.inliers.inliers.ydata,
+  result <- list(models = list(inliers.inliers.ydata     = best.model.inliers.inliers.ydata,
+                               inliers.all.ydata         = best.model.inliers.all.ydata,
+                               all.inliers.all.ydata     = best.model.all.inliers.all,
+                               all.inliers.model.inliers = best.model.all.inliers.model.inliers,
+                               all.inliers.consensus     = best.model.all.inliers.consensus),
                  #
-                 best.model.inliers.all.ydata = best.model.inliers.all.ydata,
-                 best.error.inliers.all.ydata = best.error.inliers.all.ydata,
+                 errors = list(inliers.inliers.ydata     = best.error.inliers.inliers.ydata,
+                               inliers.all.ydata         = best.error.inliers.all.ydata,
+                               all.inliers.all.ydata     = best.error.all.inliers.all,
+                               all.inliers.model.inliers = best.error.all.inliers.model.inliers,
+                               all.inliers.consensus     = best.error.all.inliers.consensus),
                  #
-                 best.model.all.inliers.all.ydata = best.model.all.inliers.all,
-                 best.error.all.inliers.all.ydata = best.error.all.inliers.all,
-                 #
-                 best.model.all.inliers.model.inliers = best.model.all.inliers.model.inliers,
-                 best.error.all.inliers.model.inliers = best.error.all.inliers.model.inliers,
-                 #
-                 best.model.all.inliers.consensus = best.model.all.inliers.consensus,
-                 best.error.all.inliers.consensus = best.error.all.inliers.consensus,
-                 #
-                 errors = error.array )
+                 error.array = error.array )
   #
   class(result) <- 'ransac'
   return(result)
