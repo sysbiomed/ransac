@@ -16,7 +16,8 @@
 #' @examples
 plot.ransac <- function(result.ransac, xdata, ydata,
                         ydata.real = NULL,
-                        family = 'binomial', name = '', baseline = NULL, show.title = T,
+                        family = 'binomial', name = '',
+                        baseline = list(), show.title = T,
                         only_consensus = T, ...) {
   #
   # retrieve family by name
@@ -31,201 +32,194 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   if (is.null(family.fun)) {
     stop('family is not well defined, see documentation')
   }
+
   #
   flog.info('Results for k = %d iterations', length(result.ransac$error.array))
-  #
-  models <- list()
-  if (!only_consensus) {
-    models$rans.2 <- result.ransac$models$inliers.all.ydata
-    models$rans.3 <- result.ransac$models$all.inliers.model.inliers
-    models$rans.4 <- result.ransac$models$all.inliers.all.ydata
-    models$rans.5 <- result.ransac$models$inliers.inliers.ydata
-  }
-  models$ransac <- result.ransac$models$all.inliers.consensus
-  #
+
+  # Populate penalty.factor as 1 if is not defined
   if (!exists('penalty.factor')) {
     penalty.factor <- array(1, ncol(xdata))
   }
+
   #
-  if(is.null(baseline)) {
-    models$glmnet <- family.fun$fit.model(xdata, ydata,
-                                          ...)
-  } else {
-    flog.info('Using given baseline model')
-    models$glmnet <- baseline
-  }
-  if (family == 'binomial.glmnet' && any(models$glmnet$lambda == Inf)) {
-    flog.info('Error when fitting baseline')
-    return()
-  }
-  #
-  my.fits <- list()
-  if (!only_consensus) {
-    my.fits$rans.2 <- family.fun$predict(models$rans.2, xdata, ...)
-    my.fits$rans.3 <- family.fun$predict(models$rans.3, xdata, ...)
-    my.fits$rans.4 <- family.fun$predict(models$rans.4, xdata, ...)
-    my.fits$rans.5 <- family.fun$predict(models$rans.5, xdata, ...)
-  }
-  my.fits$ransac <- family.fun$predict(models$ransac, xdata, ...)
-  my.fits$glmnet <- family.fun$predict(models$glmnet, xdata, ...)
-  #
-  my.rmse <- list()
-  if (!only_consensus) {
-    my.rmse$rans.2 <- family.fun$model.error(my.fits$rans.2, ydata)
-    my.rmse$rans.3 <- family.fun$model.error(my.fits$rans.3, ydata)
-    my.rmse$rans.4 <- family.fun$model.error(my.fits$rans.4, ydata)
-    my.rmse$rans.5 <- family.fun$model.error(my.fits$rans.5, ydata)
-  }
-  my.rmse$ransac <- family.fun$model.error(my.fits$ransac, ydata)
-  my.rmse$glmnet <- family.fun$model.error(my.fits$glmnet, ydata)
-  #
+  # Build models
+  #  - if no baseline model is passed in arguments the
+  #     a simple fit with xdata / ydata is performed
+  #  - otherwise, build models from baseline and result.ransac
+
   description <- list()
+  # check if argument exists or is empty list
+  if(is.null(baseline) || (is.list(baseline) && length(baseline) == 0)) {
+    models$baseline      <- family.fun$fit.model(xdata, ydata, ...)
+    description$baseline <- 'Baseline'
+    if (any(models$baseline[[family]]$lambda == Inf)) {
+      flog.info('Error when fitting baseline')
+      return()
+    }
+  }
+  # else build from baseline argument
+  else {
+    flog.info('Using given baseline model')
+    models <- list()
+    for(ix in names(baseline)) {
+      models[[ix]]      <- baseline[[ix]]
+      #
+      description[[ix]] <- gsub('[._-]', ' ', ix)
+      # capitalize first letter of each word
+      if (require('verissimo')) {
+        description[[ix]] <- verissimo::proper(description[[ix]])
+      }
+    }
+  }
+
+  # build from result.ransac
+  models$ransac      <- result.ransac$models$all.inliers.consensus
   if (!only_consensus) {
     description$ransac <- 'RANSAC Refitted + Consensus'
+    #
     description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
+    models$rans.2      <- result.ransac$models$inliers.all.ydata
     description$rans.3 <- 'RANSAC Refitted + Inliers'
+    models$rans.3      <- result.ransac$models$all.inliers.model.inliers
     description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
+    models$rans.4      <- result.ransac$models$all.inliers.all.ydata
     description$rans.5 <- 'RANSAC Initial + Inliers'
+    models$rans.5      <- result.ransac$models$inliers.inliers.ydata
   } else {
     description$ransac <- 'RANSAC'
   }
-  description$glmnet <- 'Baseline'
+
   #
-  my.df <- data.frame()
-  if (!only_consensus) {
-    my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$rans.2), type = rep(description$rans.2, nrow(xdata))))
-    my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$rans.3), type = rep(description$rans.3, nrow(xdata))))
-    my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$rans.4), type = rep(description$rans.4, nrow(xdata))))
-    my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$rans.5), type = rep(description$rans.5, nrow(xdata))))
+  # build list of names that will show in the plots and results
+  #  this is done by joining the baseline model(s) with the output
+  #  from ransac
+  results.names <- names(models)
+
+  # fit the xdata to all the models
+  my.fits <- list()
+  for(ix in results.names) {
+    my.fits[[ix]] <- family.fun$predict(models[[ix]], xdata, ...)
   }
-  my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$ransac), type = rep(description$ransac, nrow(xdata))))
-  my.df <- rbind(my.df, data.frame(ix = seq(nrow(xdata)), val = (ydata - my.fits$glmnet), type = rep(description$glmnet, nrow(xdata))))
+
+  # find model error
+  #  TODO: change name from my.rmse to my.model.error
+  my.rmse <- list()
+  for(ix in results.names) {
+    my.rmse[[ix]] <- family.fun$model.error(my.fits[[ix]], ydata)
+  }
+  names(my.rmse) <- results.names
+
+  # build the error plot's data
+  my.df <- data.frame()
+  for(ix in results.names) {
+    my.df <- rbind(my.df,
+                   data.frame(ix = seq(nrow(xdata)),
+                              val = (ydata - my.fits[[ix]]),
+                              type = rep(description[[ix]], nrow(xdata))))
+  }
   my.df$type <- factor(my.df$type)
   colnames(my.df) <- c('ix', 'value', 'type')
-  #
+
+  # build the classification plot's data
   my.df.class <- data.frame()
   ix.sorted <- sort(ydata, index.return = T)$ix
-  if (!only_consensus) {
-    my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$rans.2[ix.sorted]), type = rep(description$rans.2, nrow(xdata))))
-    my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$rans.3[ix.sorted]), type = rep(description$rans.3, nrow(xdata))))
-    my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$rans.4[ix.sorted]), type = rep(description$rans.4, nrow(xdata))))
-    my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$rans.5[ix.sorted]), type = rep(description$rans.5, nrow(xdata))))
+  for(ix in results.names) {
+    my.df.class <- rbind(my.df.class,
+                         data.frame(ix = seq(nrow(xdata)),
+                                    val = (my.fits[[ix]][ix.sorted]),
+                                    type = rep(description[[ix]], nrow(xdata))))
   }
-  my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$ransac[ix.sorted]), type = rep(description$ransac, nrow(xdata))))
-  my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (my.fits$glmnet[ix.sorted]), type = rep(description$glmnet, nrow(xdata))))
-  my.df.class <- rbind(my.df.class, data.frame(ix = seq(nrow(xdata)), val = (ydata[ix.sorted]),          type = rep('Observed',  nrow(xdata))))
+  # add the observed values
+  my.df.class <- rbind(my.df.class,
+                       data.frame(ix = seq(nrow(xdata)),
+                                  val = (ydata[ix.sorted]),
+                                  type = rep('Observed',  nrow(xdata))))
   my.df.class$type <- factor(my.df.class$type)
   colnames(my.df.class) <- c('ix', 'value', 'type')
+
   #
-  # misclassifications
+  # calculate misclassifications
   miscl <- list()
-  if (!only_consensus) {
-    miscl$rans.2 <- list()
-    miscl$rans.3 <- list()
-    miscl$rans.4 <- list()
-    miscl$rans.5 <- list()
+  for(ix in results.names) {
+    miscl[[ix]] <- list()
+    miscl[[ix]]$false.pos <- round(ydata - my.fits[[ix]]) == -1
+    miscl[[ix]]$false.neg <- round(ydata - my.fits[[ix]]) == 1
   }
-  miscl$ransac <- list()
-  miscl$glmnet <- list()
+
   #
-  if (!only_consensus) {
-    miscl$rans.2$false.pos <- round(ydata - my.fits$rans.2) == -1
-    miscl$rans.2$false.neg <- round(ydata - my.fits$rans.2) == 1
-    #
-    miscl$rans.3$false.pos <- round(ydata - my.fits$rans.3) == -1
-    miscl$rans.3$false.neg <- round(ydata - my.fits$rans.3) == 1
-    #
-    miscl$rans.4$false.pos <- round(ydata - my.fits$rans.4) == -1
-    miscl$rans.4$false.neg <- round(ydata - my.fits$rans.4) == 1
-    #
-    miscl$rans.5$false.pos <- round(ydata - my.fits$rans.5) == -1
-    miscl$rans.5$false.neg <- round(ydata - my.fits$rans.5) == 1
-  }
+  # Plot the results
   #
-  miscl$ransac$false.pos <- round(ydata - my.fits$ransac) == -1
-  miscl$ransac$false.neg <- round(ydata - my.fits$ransac) == 1
+
   #
-  miscl$glmnet$false.pos <- round(ydata - my.fits$glmnet) == -1
-  miscl$glmnet$false.neg <- round(ydata - my.fits$glmnet) == 1
+  # Classification plot
+  g <- ggplot(data = my.df.class) +
+    theme_minimal() +
+    ylab('Classification') +
+    xlab('Model') +
+    geom_point(aes(ix, value, color = type)) + facet_wrap( ~ type , ncol = 2)
   #
-  g <- ggplot(data = my.df.class) + theme_minimal() + ylab('Classification') + xlab('Model')
-  if (show.title) { g <- g + ggtitle(name) }
+  if (show.title)      { g <- g + ggtitle(name) }
   if (!only_consensus) { g <- g + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  g <- g + geom_point(aes(ix, value, color = type)) + facet_wrap( ~ type , ncol = 2)
   print(g)
+
   #
-  g <- ggplot(data = my.df) + theme_minimal() + ylab('Error') + xlab('Model')
-  if (show.title) { g <- g + ggtitle(name) }
+  # Error plot
+  g <- ggplot(data = my.df) +
+    theme_minimal() +
+    ylab('Error') + xlab('Model') +
+    geom_quasirandom(aes(type, value, color = type), bandwidth = 2, method = 'quasirandom') +
+    scale_y_continuous(limits = c(-1,1))
+  if (show.title)      { g <- g + ggtitle(name) }
   if (!only_consensus) { g <- g + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  g <- g + geom_quasirandom(aes(type, value, color = type), bandwidth = 2, method = 'quasirandom') + scale_y_continuous(limits = c(-1,1))
   print(g)
+
   #
-  if (!only_consensus) {
-    non.zero.rans.2 <- family.fun$coef(models$rans.2, ...)[-1] != 0
-    non.zero.rans.3 <- family.fun$coef(models$rans.3, ...)[-1] != 0
-    non.zero.rans.4 <- family.fun$coef(models$rans.4, ...)[-1] != 0
-    non.zero.rans.5 <- family.fun$coef(models$rans.5, ...)[-1] != 0
-  }
-  non.zero.ransac <- family.fun$coef(models$ransac, ...)[-1] != 0
-  non.zero.glmnet <- family.fun$coef(models$glmnet, ...)[-1] != 0
+  # Textual results
+  #
+
   #
   flog.info('Information on RANSAC and Baseline model')
-  if (!only_consensus) {
-    flog.info('  %d Co-Var. % 4d Obs %e %s in %s', sum(non.zero.rans.2), family.fun$nobs(models$rans.2), my.rmse$rans.2, family.fun$model.error.type, description$rans.2)
-    flog.info('  %d Co-Var. % 4d Obs %e %s in %s', sum(non.zero.rans.3), family.fun$nobs(models$rans.3), my.rmse$rans.3, family.fun$model.error.type, description$rans.3)
-    flog.info('  %d Co-Var. % 4d Obs %e %s in %s', sum(non.zero.rans.4), family.fun$nobs(models$rans.4), my.rmse$rans.4, family.fun$model.error.type, description$rans.4)
-    flog.info('  %d Co-Var. % 4d Obs %e %s in %s', sum(non.zero.rans.5), family.fun$nobs(models$rans.5), my.rmse$rans.5, family.fun$model.error.type, description$rans.5)
+  non.zero <- list()
+  has.shown.sep <- F
+  for(ix in results.names) {
+    non.zero[[ix]] <- family.fun$coef(models[[ix]], ...)[-1] != 0
+    if (ix %in% names(baseline)) {
+      has.shown.sep <- T
+      flog.info('----------------- Baseline ----------')
+    }
+    flog.info('  %d Co-Var. % 4d Obs %e %s in %s',
+              sum(non.zero[[ix]]),
+              family.fun$nobs(models[[ix]]),
+              my.rmse[[ix]],
+              family.fun$model.error.type,
+              description[[ix]])
   }
-  flog.info('  %d Co-Var. % 4d Obs %e %s in %s', sum(non.zero.ransac), family.fun$nobs(models$ransac), my.rmse$ransac, family.fun$model.error.type, description$ransac)
-  flog.info('----------------- Baseline ----------')
-  flog.info('  %d Co-Var. %d Obs %e %s in Baseline', sum(non.zero.glmnet), family.fun$nobs(models$glmnet), my.rmse$glmnet, family.fun$model.error.type)
+
+  #
+  # False Positive/Negative textual output
+  #
+
   #
   flog.info('')
   flog.info('')
   flog.info('False Positive/Negative')
-  if (!only_consensus) {
-    flog.info('  %d / %d -- %s', sum(miscl$rans.2$false.pos), sum(miscl$rans.2$false.neg), description$rans.2)
-    flog.info('  %d / %d -- %s', sum(miscl$rans.3$false.pos), sum(miscl$rans.3$false.neg), description$rans.3)
-    flog.info('  %d / %d -- %s', sum(miscl$rans.4$false.pos), sum(miscl$rans.4$false.neg), description$rans.4)
-    flog.info('  %d / %d -- %s', sum(miscl$rans.5$false.pos), sum(miscl$rans.5$false.neg), description$rans.5)
+  for(ix in results.names) {
+    flog.info('  %d / %d -- %s',
+              sum(miscl[[ix]]$false.pos),
+              sum(miscl[[ix]]$false.neg),
+              description[[ix]])
   }
-  flog.info('  %d / %d -- %s', sum(miscl$ransac$false.pos), sum(miscl$ransac$false.neg), description$ransac)
-  flog.info('  %d / %d -- %s', sum(miscl$glmnet$false.pos), sum(miscl$glmnet$false.neg), description$glmnet)
+
   #
   flog.info('')
   flog.info('')
   flog.info('Misclassifications index')
-  if (!only_consensus) {
+  for(ix in results.names) {
     flog.info('')
-    flog.info('  %s', description$rans.2)
-    flog.info('    False Positive %s', paste(which(miscl$rans.2$false.pos), collapse = ', '))
-    flog.info('    False Negative %s', paste(which(miscl$rans.2$false.neg), collapse = ', '))
-    #
-    flog.info('')
-    flog.info('  %s', description$rans.3)
-    flog.info('    False Positive %s', paste(which(miscl$rans.3$false.pos), collapse = ', '))
-    flog.info('    False Negative %s', paste(which(miscl$rans.3$false.neg), collapse = ', '))
-    #
-    flog.info('')
-    flog.info('  %s', description$rans.4)
-    flog.info('    False Positive %s', paste(which(miscl$rans.4$false.pos), collapse = ', '))
-    flog.info('    False Negative %s', paste(which(miscl$rans.4$false.neg), collapse = ', '))
-    #
-    flog.info('')
-    flog.info('  %s', description$rans.5)
-    flog.info('    False Positive %s', paste(which(miscl$rans.5$false.pos), collapse = ', '))
-    flog.info('    False Negative %s', paste(which(miscl$rans.5$false.neg), collapse = ', '))
+    flog.info('  %s', description[[ix]])
+    flog.info('    False Positive %s', paste(which(miscl[[ix]]$false.pos), collapse = ', '))
+    flog.info('    False Negative %s', paste(which(miscl[[ix]]$false.neg), collapse = ', '))
   }
-  #
-  flog.info('')
-  flog.info('  %s', description$ransac)
-  flog.info('    False Positive %s', paste(which(miscl$ransac$false.pos), collapse = ', '))
-  flog.info('    False Negative %s', paste(which(miscl$ransac$false.neg), collapse = ', '))
-  #
-  flog.info('')
-  flog.info('  %s', description$glmnet)
-  flog.info('    False Positive %s', paste(which(miscl$glmnet$false.pos), collapse = ', '))
-  flog.info('    False Negative %s', paste(which(miscl$glmnet$false.neg), collapse = ', '))
   #
   # return the misclassifications
   return(list(description = description, misclassifications = miscl))
