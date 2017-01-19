@@ -48,6 +48,25 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   #  - otherwise, build models from baseline and result.ransac
 
   description <- list()
+  models <- list()
+
+  # build from result.ransac
+  if (!only_consensus) {
+    #
+    description$rans.5 <- 'RANSAC Initial + Inliers'
+    models$rans.5      <- result.ransac$models$inliers.inliers.ydata
+    description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
+    models$rans.2      <- result.ransac$models$inliers.all.ydata
+    description$rans.3 <- 'RANSAC Refitted + Inliers'
+    models$rans.3      <- result.ransac$models$all.inliers.model.inliers
+    description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
+    models$rans.4      <- result.ransac$models$all.inliers.all.ydata
+    description$ransac <- 'RANSAC Refitted + Consensus'
+  } else {
+    description$ransac <- 'RANSAC'
+  }
+  models$ransac      <- result.ransac$models$all.inliers.consensus
+
   # check if argument exists or is empty list
   if(is.null(baseline) || (is.list(baseline) && length(baseline) == 0)) {
     models$baseline      <- family.fun$fit.model(xdata, ydata, ...)
@@ -60,33 +79,12 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   # else build from baseline argument
   else {
     flog.info('Using given baseline model')
-    models <- list()
+
     for(ix in names(baseline)) {
       models[[ix]]      <- baseline[[ix]]
       #
       description[[ix]] <- gsub('[._-]', ' ', ix)
-      # capitalize first letter of each word
-      if (require('verissimo')) {
-        description[[ix]] <- verissimo::proper(description[[ix]])
-      }
     }
-  }
-
-  # build from result.ransac
-  models$ransac      <- result.ransac$models$all.inliers.consensus
-  if (!only_consensus) {
-    description$ransac <- 'RANSAC Refitted + Consensus'
-    #
-    description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
-    models$rans.2      <- result.ransac$models$inliers.all.ydata
-    description$rans.3 <- 'RANSAC Refitted + Inliers'
-    models$rans.3      <- result.ransac$models$all.inliers.model.inliers
-    description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
-    models$rans.4      <- result.ransac$models$all.inliers.all.ydata
-    description$rans.5 <- 'RANSAC Initial + Inliers'
-    models$rans.5      <- result.ransac$models$inliers.inliers.ydata
-  } else {
-    description$ransac <- 'RANSAC'
   }
 
   #
