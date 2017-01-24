@@ -15,22 +15,26 @@
 #'
 #' @examples
 plot.ransac <- function(result.ransac, xdata, ydata,
-                        ydata.real = NULL,
+                        ydata.prob = NULL,
                         family = 'binomial', name = '',
                         baseline = list(), show.title = T,
-                        only_consensus = T, ...) {
+                        only_consensus = T, outliers = NULL,
+                        ...) {
   #
   # retrieve family by name
   if (is.character(family)) {
-    family.fun <- switch(family,
-                         binomial.glmnet     = ransac.binomial.glmnet(),
-                         binomial.glmnet.auc = ransac.binomial.glmnet.auc(),
-                         binomial.glm        = ransac.binomial.glm())
+    family.fun <- ransac.family(family)
   } else {
     family.fun <- family
   }
   if (is.null(family.fun)) {
     stop('family is not well defined, see documentation')
+  }
+
+  # probabilities vector
+  #  defaults to 0/1 if not given
+  if (is.null(ydata.prob)) {
+    ydata.prob <- ydata
   }
 
   #
@@ -76,6 +80,11 @@ plot.ransac <- function(result.ransac, xdata, ydata,
       return()
     }
   }
+  # a model is given
+  else if (is.list(baseline) && !('list' %in% class(baseline))) {
+    models$baseline      <- baseline
+    description$baseline <- 'Baseline'
+  }
   # else build from baseline argument
   else {
     flog.info('Using given baseline model')
@@ -112,7 +121,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   for(ix in results.names) {
     my.df <- rbind(my.df,
                    data.frame(ix = seq(nrow(xdata)),
-                              val = (ydata - my.fits[[ix]]),
+                              val = (ydata.prob - my.fits[[ix]]),
                               type = rep(description[[ix]], nrow(xdata))))
   }
   my.df$type <- factor(my.df$type)
@@ -202,22 +211,59 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   flog.info('')
   flog.info('False Positive/Negative')
   for(ix in results.names) {
-    flog.info('  %d / %d -- %s',
+    flog.info('  % 3d / % 3d (total: % 3d) -- %s',
               sum(miscl[[ix]]$false.pos),
               sum(miscl[[ix]]$false.neg),
+              sum(miscl[[ix]]$false.pos) + sum(miscl[[ix]]$false.neg),
               description[[ix]])
   }
 
   #
+  if (is.null(outliers)) {
+    outliers <- factor(array('', length(ydata)))
+  }
   flog.info('')
   flog.info('')
   flog.info('Misclassifications index')
   for(ix in results.names) {
+    natural.pos <- miscl[[ix]]$false.pos & outliers == 'Natural'
+    natural.neg <- miscl[[ix]]$false.neg & outliers == 'Natural'
+    #
+    perturbed.pos <- miscl[[ix]]$false.pos & outliers == 'Perturbed'
+    perturbed.neg <- miscl[[ix]]$false.neg & outliers == 'Perturbed'
+    #
+    both.pos <- miscl[[ix]]$false.pos & outliers == 'Natural and Perturbed'
+    both.neg <- miscl[[ix]]$false.neg & outliers == 'Natural and Perturbed'
+    #
+    other.pos <- miscl[[ix]]$false.pos & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
+    other.neg <- miscl[[ix]]$false.neg & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
+    #
+    {
     flog.info('')
     flog.info('  %s', description[[ix]])
-    flog.info('    False Positive %s', paste(which(miscl[[ix]]$false.pos), collapse = ', '))
-    flog.info('    False Negative %s', paste(which(miscl[[ix]]$false.neg), collapse = ', '))
+    flog.info('    False Positives % 4d', sum(miscl[[ix]]$false.pos))
+    flog.info('           Natural (% 4d) %s', sum(natural.pos),   paste(which(natural.pos), collapse = ', '))
+    flog.info('           Pertur. (% 4d) %s', sum(perturbed.pos), paste(which(perturbed.pos), collapse = ', '))
+    flog.info('      Nat. + Pert. (% 4d) %s', sum(both.pos),      paste(which(both.pos), collapse = ', '))
+    flog.info('             Other (% 4d) %s', sum(other.pos),     paste(which(other.pos), collapse = ', '))
+    flog.info('    False Negatives % 4d', sum(miscl[[ix]]$false.pos))
+    flog.info('           Natural (% 4d) %s', sum(natural.neg),   paste(which(natural.neg), collapse = ', '))
+    flog.info('           Pertur. (% 4d) %s', sum(perturbed.neg), paste(which(perturbed.neg), collapse = ', '))
+    flog.info('      Nat. + Pert. (% 4d) %s', sum(both.neg),      paste(which(both.neg), collapse = ', '))
+    flog.info('             Other (% 4d) %s', sum(other.neg),     paste(which(other.neg), collapse = ', '))
+    }
   }
+
+  #
+  # build a data.frame with coefficients
+  coef.df <- data.frame()
+  for (ix in names(models)) {
+    coef.df <- rbind(coef.df, as.vector(family.fun$coef(models[[ix]], ...)))
+  }
+  rownames(coef.df) <- unlist(description)
+  colnames(coef.df) <- c('Intercept', colnames(xdata))
+  flog.info('Coefficients:', coef.df, capture = T)
+
   #
   # return the misclassifications
   return(list(description = description, misclassifications = miscl))

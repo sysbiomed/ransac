@@ -7,7 +7,7 @@
 #' @export
 #'
 #' @examples
-ransac.binomial.glm <- function() {
+ransac.binomial.glm <- function(auc = F, residuals = 'deviance') {
   #
   #
   # Functions
@@ -51,6 +51,11 @@ ransac.binomial.glm <- function() {
     return((ydata - ydata.predicted)^2)
   }
 
+  # Deviance
+  error.dev.fun <- function(ydata, ydata.predicted) {
+    return(abs((ydata - ydata.predicted)/sqrt(ydata.predicted*(1-ydata.predicted))))
+  }
+
   # prediction function
   coef.fun <- function(object, ...) {
     coef(object = object)
@@ -61,8 +66,14 @@ ransac.binomial.glm <- function() {
     predict(object = object, newdata = data.frame(newx), type = 'response')
   }
 
+  # Using AUC
+  model.error.auc.fun <- function(ydata.predicted, ydata) {
+    roc.dat <- AUC::roc(ydata.predicted, labels = factor(ydata))
+    return(1 - AUC::auc(roc.dat))
+  }
+
   # Using RMSE
-  model.error.fun <- function(ydata, ydata.predicted) {
+  model.error.fun <- function(ydata.predicted, ydata) {
     mean(sqrt(error.fun(ydata, ydata.predicted)))
   }
 
@@ -77,15 +88,23 @@ ransac.binomial.glm <- function() {
     #
   }
 
+  model.error.type <- if (auc) 'AUC' else 'RME'
   #
+  error.type.fun <- switch(residuals,
+                           squared.error = error.fun,
+                           deviance      = error.dev.fun)
+  error.type.txt <- switch(residuals,
+                           "squared.error" = 'Squared Error',
+                           "deviance"      = 'Deviance Residuals')
+
   #
   return(list(
     # Squared error
-    error = error.fun,
+    error = error.type.fun,
     # prediction function
     predict = predict.fun,
     # Using RMSE
-    model.error = model.error.fun,
+    model.error = if (auc) model.error.auc.fun else model.error.fun,
     # fitting model
     fit.model = fit.fun,
     # sample function
@@ -96,9 +115,11 @@ ransac.binomial.glm <- function() {
     coef = coef.fun,
     # Compare error with threshold
     threshold.cmp = threshold.cmp.fun,
+    # model name
+    model.name = sprintf('GLM (%s)', model.error.type),
     # Model Error function name
-    model.error.type = 'RMSE',
+    model.error.type = model.error.type,
     # Error function name
-    error.type = 'Squared error'))
+    error.type = error.type.txt))
 }
 

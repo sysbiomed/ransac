@@ -18,19 +18,10 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
                    k = 100,
                    family = 'binomial',
                    mc.cores = 1, ...) {
+  arguments <- list(...)
   #
   # retrieve family by name
-  if (is.character(family)) {
-    family.fun <- switch(family,
-                         binomial.glmnet     = ransac.binomial.glmnet(),
-                         binomial.glmnet.auc = ransac.binomial.glmnet.auc(),
-                         binomial.glm        = ransac.binomial.glm())
-  } else {
-    family.fun <- family
-  }
-  if (is.null(family.fun)) {
-    stop('family is not well defined, see documentation')
-  }
+  family.fun <- ransac.family(family)
   #
   flog.debug('Starting ransac with:')
   flog.debug('                 k: %d', k)
@@ -46,9 +37,10 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     #
     # draw a random sample from the dataset with size n
     xdata.min.ix <- family.fun$sample(ydata, n, min.el = n/3)
-    xdata.min <- xdata[xdata.min.ix, ]
-    ydata.min <- ydata[xdata.min.ix]
-    penalty.factor.min <- penalty.factor[xdata.min.ix]
+    xdata.min    <- xdata[xdata.min.ix,]
+    ydata.min    <- ydata[xdata.min.ix]
+    #
+    penalty.factor.min <- arguments$penalty.factor[xdata.min.ix]
     #
     flog.debug('  ydata table: %d / %d (class 0 / class 1)', sum(ydata.min == 0), sum(ydata.min == 1))
     #

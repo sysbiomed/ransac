@@ -9,7 +9,7 @@
 #' @export
 #'
 #' @examples
-ransac.binomial.glmnet <- function() {
+ransac.binomial.glmnet <- function(auc = F, residuals = 'deviance') {
   #
   #
   # Functions
@@ -24,11 +24,6 @@ ransac.binomial.glmnet <- function() {
     return(error <= threshold)
   }
 
-  # Squared Error
-  error.fun <- function(ydata, ydata.predicted) {
-    return((ydata - ydata.predicted)^2)
-  }
-
   # Get Coefficients function
   coef.fun <- function(object, lambda, ...) {
     coef(object = object, s = lambda)
@@ -39,8 +34,14 @@ ransac.binomial.glmnet <- function() {
     predict(object = object, newx = newx, s = lambda, type = 'response')
   }
 
+  # Using AUC
+  model.error.auc.fun <- function(ydata.predicted, ydata) {
+    roc.dat <- AUC::roc(ydata.predicted, labels = factor(ydata))
+    return(1 - AUC::auc(roc.dat))
+  }
+
   # Using RMSE
-  model.error.fun <- function(ydata, ydata.predicted) {
+  model.error.fun <- function(ydata.predicted, ydata) {
     mean(sqrt(error.fun(ydata, ydata.predicted)))
   }
 
@@ -60,7 +61,7 @@ ransac.binomial.glmnet <- function() {
     #
   }
 
-  parent.family <- ransac.binomial.glm()
+  parent.family <- ransac.binomial.glm(auc, residuals)
   #
   return(list(
     # Squared error
@@ -68,7 +69,7 @@ ransac.binomial.glmnet <- function() {
     # prediction function
     predict = predict.fun,
     # Using RMSE
-    model.error = parent.family$model.error,
+    model.error = if (auc) model.error.auc.fun else model.error.fun,
     # fitting model
     fit.model = fit.fun,
     # sample function
@@ -79,9 +80,11 @@ ransac.binomial.glmnet <- function() {
     coef = coef.fun,
     # threshold comparison
     threshold.cmp = threshold.cmp.fun,
+    # model name
+    model.name = sprintf('GLMNET (%s)', model.error.type),
     # Model Error function name
-    model.error.type = 'RMSE',
+    model.error.type = parent.family$model.error.type,
     # Error function name
-    error.type = 'Squared error'))
+    error.type = parent.family$error.type))
 }
 

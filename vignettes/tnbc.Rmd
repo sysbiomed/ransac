@@ -1,0 +1,987 @@
+---
+title: "RANSAC TNBC"
+output: 
+  github_document:
+    toc: true
+    dev: svg
+params:
+  mc.cores: !r 10
+  # seed to make reproducible results
+  my.seed: !r 1985
+  
+  #
+  # Feature selection by consensus variables
+  
+  # Sample for each run
+  sample.min: !r .7
+  # number of repetition to be done in consensus finding
+  nreps: !r 1000
+  
+  # Keep genes that appear at least in this percentage of runs
+  threshold.to.keep: !r -Inf
+  
+  # Target alpha parameters to use
+  target.alpha.vector: !r c(1, 0.5, .7)
+  
+  # Number of lambdas to test
+  nlambda: !r 1000
+  # Minimum ratio of lambda from initial
+  lambda.min.ratio: !r 1e-5
+  
+  #
+  # Data to use
+  data.origin: 'synth0b'
+  
+  #
+  # Test and Training data
+  
+  # percentage of data used in training
+  train.perc: !r 1
+  
+  #
+  # Ransac
+  
+  # number of iterations
+  k: !r 500
+  # type of model to use
+  my.family: 'binomial.glm.auc'
+  # minimum number of points to use
+  n: !r 30
+  # threshold to identify inliers
+  threshold: !r .1^2
+  # number of inliers to consider good model
+  good.fit.perct: !r .4
+  # chose one of the lambda / alpha / penalty
+  alpha.baseline: !r 0
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries required
+
+```{r libraries}
+# output nothing
+suppressPackageStartupMessages({
+  source(file.path('..', 'R-aux', 'dataset_brca_tnbc.R'))
+  #library(ransac)
+  devtools::load_all('../')
+  library(brca.data)
+  library(futile.logger)
+  library(glmnet)
+  library(verissimo)
+  library(dplyr)
+  library(ggbeeswarm)
+  library(ggplot2)
+  library(reshape2)
+})
+```
+
+Setup logging to write to file `logger.txt` and using DEBUG level
+
+```{r logging.settings}
+# show no output
+.Last.value <- { 
+  flog.layout(layout.simple)
+  flog.appender(appender.tee('logger.txt'))
+  flog.threshold(DEBUG)
+}
+```
+
+## Parameters
+
+```{r params, include=FALSE}
+#
+# Generic parameters
+
+# number of cores to use
+mc.cores <- params$mc.cores
+
+# seed to make reproducible results
+my.seed <- params$my.seed
+
+#
+# Feature selection by consensus variables
+
+# Sample for each run
+sample.min <- params$sample.min
+# number of repetition to be done in consensus finding
+nreps      <- params$nreps
+
+# Keep genes that appear at least in this percentage of runs
+threshold.to.keep <- params$threshold.to.keep
+
+# Target alpha parameters to use
+target.alpha.vector <- params$target.alpha.vector
+
+# Number of lambdas to test
+nlambda             <- params$nlambda
+# Minimum ratio of lambda from initial
+lambda.min.ratio    <- params$lambda.min.ratio
+
+#
+# Data to use
+data.origin <- params$data.origin
+
+#
+# Test and Training data
+
+# percentage of data used in training
+train.perc <- params$train.perc
+
+#
+# Ransac
+
+# number of iterations
+k              <- params$k
+
+# type of model to use
+my.family      <- params$my.family
+# get family.fun
+family.fun <- ransac.family(my.family)
+
+# minimum number of points to use
+n              <- params$n
+# threshold to identify inliers
+threshold      <- params$threshold
+# number of inliers to consider good model
+good.fit.perct <- params$good.fit.perct
+# chose one of the lambda / alpha / penalty
+alpha.baseline <- params$alpha.baseline
+```
+
+```{r show.params, echo=FALSE}
+{
+  flog.info('Parameters:')
+  flog.info('')
+  flog.info('---- General --------------------')
+  flog.info('                           Family: %s', my.family)
+  flog.info('         initial seed for reprod.: %d', my.seed)
+  flog.info('                       # of cores: %d', mc.cores)
+  flog.info('----------------------------------')
+  if (threshold.to.keep != -Inf) {
+    flog.info('')
+    flog.info('---- Consesus variables ----------')
+    flog.info('               sample at each run: %g', sample.min)
+    flog.info('                   number of runs: %d', nreps)
+    flog.info('  min. of repetitions of variables')
+    flog.info('             to keep as consensus: %g', threshold.to.keep)
+    flog.info('          alphas to use in glmnet: %s', paste(target.alpha.vector, collapse = ', '))
+    flog.info('             # of lambdas to test: %d', nlambda)
+    flog.info('                 lambda.min.ratio: %g', lambda.min.ratio)
+    flog.info('----------------------------------')
+  }
+  flog.info('')
+  flog.info('---- RANSAC ----------------------')
+  flog.info('                      Data origin: %s', data.origin)
+  flog.info('                      Train set %%: %g', train.perc)
+  flog.info('                     k iterations: %d', k)
+  flog.info('          minimum number of cases: %d', n)
+  flog.info('      threshold to keep (squared): %g', threshold)
+  flog.info('   %% of inliers to consider model: %g', good.fit.perct)
+  flog.info('       alpha to be used in RANSAC: %g', alpha.baseline)
+}
+```
+
+## Get the data
+
+This is controlled by `data.origin` variable, that decides which type of data should be used.
+
+All data and steps are saved in a cache to speed up the analysis.
+
+```{r functions, include=FALSE}
+outlier.description <-function(ydata, include.perturb = F) {
+  outliers <- 1 * (abs(ydata$real_class - 1*(ydata$prob > 0.5)) == 1)
+  if (include.perturb) {
+    outliers <- outliers + 2 * (ydata$real_class != ydata$logit_class)
+  }
+  plyr::revalue(factor(outliers), c('1' = 'Natural', '0' = '', '2' = 'Perturbed', '3' = 'Natural and Perturbed'))
+}
+
+gen.synth <- function(obs, new.coef, perturbation.perct = 0.1, perfect.model = F) {
+  
+  # create a large dataset
+  if (perfect.model) {
+      len <- obs * 10
+  } else {
+    len <- obs
+  }
+  
+  # intercept
+  intercept <- new.coef[1]
+  new.coef  <- new.coef[-1]
+  
+  # get number of variables from coefficient
+  nvars     <- length(new.coef)
+  
+  # generate a random X
+  xdata.all <- sapply(seq(nvars), function(e, len) { rnorm(len)}, len)
+  # add names
+  rownames(xdata.all) <- seq(nrow(xdata.all))
+  colnames(xdata.all) <- paste0('X', seq(ncol(xdata.all)))
+  
+  # linear combination with a bias
+  z  <- intercept + xdata.all %*% new.coef
+  
+  # pass through an inv-logit function
+  pr <- 1 / (1 + exp(-z))       
+  
+  # bernoulli response variable
+  ydata.all  <- data.frame(prob = pr, real_class = rbinom(len, 1 , pr))
+  
+  # test model
+  all.data.model <- family.fun$fit.model(xdata.all, ydata.all$real_class, lambda = 1e-16)
+  
+  if (perfect.model) {
+    # get all outliers
+    outliers <- ydata.all$real_class - round(family.fun$predict(all.data.model, newx = xdata.all)) != 0
+    
+    if (len - sum(outliers) < obs) {
+      warning('Too many outlying observations to determine good model')
+    }
+    
+    # reduce number of obs if needed
+    obs <- min(c(obs), len - sum(outliers))
+    
+    # subset
+    ydata <- ydata.all[!outliers,][sample(seq(obs), obs),]
+    xdata <- xdata.all[rownames(ydata),]
+    
+  } else {
+    ydata <- ydata.all
+    xdata <- xdata.all
+  }
+  
+  # rename rows
+  rownames(ydata) <- rownames(xdata) <- seq(obs)
+  
+  # perturbation
+  perturbation.ix <- sample(seq(nrow(ydata)), round(obs * perturbation.perct))
+  ydata$logit_class <- ydata$real_class
+  # switch class
+  ydata$logit_class[perturbation.ix] <- (ydata$real_class[perturbation.ix] - 1)* -1
+  
+  # return a list of xdata and ydata
+  return(list(xdata = xdata, ydata = ydata))
+}
+#
+#
+#
+find.lambda <- function(lambda) {
+  return(sort(c(1000,100, 10, 
+                c(50, 10, 5, 4, 3, 2, 1.5, 1, 
+                  0.5, 1e-1, 1e-2, 1e-3, 1e-4, 
+                  1e-5, 1e-6, 1e-7) * lambda), decreasing = T))
+}
+```
+
+
+```{r build.data}
+# build cache file name
+cache.file <- file.path('cache', sprintf('ransac.data_%s.RData', data.origin))
+
+#
+set.seed(my.seed)
+
+#
+if (file.exists(cache.file)) {
+  flog.info('Loading cache with data: %s', cache.file)
+  load(cache.file)
+} else {
+  flog.info('Loading from \'%s\'', data.origin)
+  if (data.origin == 'tnbc'){
+    my.data  <- dataset.brca.tnbc()
+    new.coef <- array(0, ncol(my.data$xdata + 1)) 
+  } else if (data.origin == 'synth0a') {
+    # New coefficient for model
+    new.coef      <- c(0,3,2,1.5)
+    my.data <- gen.synth(obs = 100, new.coef = new.coef, perturbation.perct = 0.1)
+  } else if (data.origin == 'synth0b') {
+    # New coefficient for model
+    new.coef      <- c(0,3,2,1.5)
+    my.data <- gen.synth(obs = 1000, new.coef = new.coef, perturbation.perct = 0.1)
+  } else if (data.origin == 'synth1a') {
+    # New coefficient for model
+    new.coef      <- c(0,3,2,1.5,0,0,0,0,0)
+    my.data <- gen.synth(obs = 100, new.coef = new.coef, perturbation.perct = 0.1)
+  } else if (data.origin == 'synth1b') {
+    # New coefficient for model
+    new.coef      <- c(0,3,2,1.5,0,0,0,0,0)
+    my.data <- gen.synth(obs = 1000, new.coef = new.coef, perturbation.perct = 0.1)
+  } else if (data.origin == 'synth2a') {
+    # New coefficient for model
+    nvars         <- 10000
+    new.coef      <- c(10,10 * runif(nvars))
+    my.data <- gen.synth(obs = 100, new.coef = new.coef, perturbation.perct = 0.1)
+  } else if (data.origin == 'synth2b') {
+    # New coefficient for model
+    nvars         <- 10000
+    new.coef      <- c(0,10 * runif(nvars))
+    my.data <- gen.synth(obs = 1000, new.coef = new.coef, perturbation.perct = 0.1)
+  } else {
+    stop(sprintf('Dataset not found: %s', data.origin))
+  }
+  # get xdata and ydata
+  xdata <- my.data$xdata
+  ydata <- my.data$ydata
+  
+  # set variables
+  dataset.name <- data.origin
+  dataset.coef <- new.coef
+
+  # save to cache file
+  save(xdata, ydata, dataset.name, dataset.coef, file = cache.file)  
+}
+```
+
+### Define penalty (only used with `glmnet` models)
+
+```{r}
+#  Add more such as degree penalty
+penalty.list                  <- list()
+
+default.penalty.factor        <- array(1, ncol(xdata))
+names(default.penalty.factor) <- colnames(xdata)
+
+penalty.list$glmnet = default.penalty.factor
+```
+
+
+## Find Consensus variables for data
+
+To disable feature selection `threshold.to.keep != -Inf`.
+
+Otherwise it will:
+
+- Run `nreps` times GLMNET with different `target.alpha.vector` values
+- Select only variables that appear at least `threshold.to.keep` (in percentage)
+
+The parameters are described in a section above
+
+```{r prepare_parameters, include=FALSE}
+# build all possible combinations
+pair.comb <- sapply(seq_along(target.alpha.vector), function(ix) {
+  lapply(names(penalty.list), function(ix.name) {
+    list(alpha = target.alpha.vector[ix], 
+         penalty = penalty.list[[ix.name]],
+         penalty.name = ix.name)
+  })
+})
+```
+
+```{r find_lambda, include=FALSE}
+#
+# This finds the best lambdas for each iteration
+#
+
+if (threshold.to.keep != -Inf) {
+  # Does not need paralleziation, as cv.glmnet does it itself
+  cv.result.list <- lapply(seq_along(pair.comb), function(ix) {
+    target.alpha        <- pair.comb[[ix]]$alpha
+    target.penalty      <- pair.comb[[ix]]$penalty
+    target.penalty.name <- pair.comb[[ix]]$penalty.name
+    #
+    cache.file <- file.path('cache', sprintf('cv.glmnet-%s.%.3f.%s.%d.%d.%g.RData',
+                                             data.origin,
+                                             target.alpha, 
+                                             pair.comb[[ix]]$penalty.name,
+                                             my.seed,
+                                             nlambda,
+                                             lambda.min.ratio))
+    if (file.exists(cache.file)) {
+      flog.info('Loading cache from: %s', cache.file)
+      load(cache.file)
+    } else  {
+      flog.info('Running CV.GLMNET to calculate appropriate lambda value')
+  
+      # Get predictable fold id
+      set.seed(my.seed)
+      #
+      cv.folds <- balanced.cv.folds(which(ydata$logit_class == 0), which(ydata$logit_class == 1))
+      foldid   <- array(0, length(ydata))
+      foldid[ydata$logit_class == 0] <- cv.folds$output[[1]]
+      foldid[ydata$logit_class == 1] <- cv.folds$output[[2]]
+      #
+      cv.result <- cv.glmnet(xdata, ydata$logit_class, 
+                             family           = 'binomial', 
+                             alpha            = target.alpha, 
+                             penalty.factor   = target.penalty,
+                             nlambda          = nlambda, 
+                             lambda.min.ratio = lambda.min.ratio,
+                             foldid           = foldid, 
+                             #
+                             mc.cores = mc.cores)
+      #
+      save(foldid, cv.result, nlambda, target.alpha,
+           my.seed, target.penalty.name, target.penalty,
+           file = cache.file)
+    }
+    flog.info('  Parameters:')
+    flog.info('           alpha: %f', target.alpha)
+    flog.info('    penalty.name: %s', target.penalty.name)
+    flog.info('     Best Lambda: %g', cv.result$lambda.min)
+    flog.info('')
+    #
+    return(list(glmnet = cv.result,
+                alpha  = target.alpha, 
+                penalty.factor = target.penalty,
+                penalty.name   = target.penalty.name))
+  })
+}
+```
+
+```{r find_variables, include=FALSE}
+#
+# Runs nreps times to find the consensus variables
+#
+
+if (threshold.to.keep != -Inf) {
+  #  
+  flog.info('Running multiple GLMNET to determine consensus variables')
+  
+  multiple.runs <- lapply(seq_along(cv.result.list), function(ix) {
+    cv.result     <- cv.result.list[[ix]]$glmnet
+    target.alpha  <- cv.result.list[[ix]]$alpha
+    target.lambda <- cv.result.list[[ix]]$glmnet$lambda.min
+    #
+    target.penalty.factor <- cv.result.list[[ix]]$penalty.factor
+    target.penalty.name   <- cv.result.list[[ix]]$penalty.name
+    # reproducibility
+    set.seed(my.seed)
+    #
+    cache.file <- file.path('cache', sprintf('repeated.variables-%s.%.3f.%.3f.%d.%d.RData',
+                                             data.origin, target.alpha, sample.min, nreps, my.seed))
+    # 
+    if (file.exists(cache.file)) {
+      flog.info('')
+      flog.info('  Loading cache from: %s', cache.file)
+      load(cache.file)
+    } else {
+      glmnet.result <- mclapply(1:nreps, function(ix.2) {
+        # get a sample of the data
+        balanced.data <- balanced.train.and.test(which(ydata$logit_class == 1), 
+                                                 which(ydata$logit_class == 0), 
+                                                 train.perc = sample.min, join.all = T)
+        flog.info('  Run %d / %d', ix.2, nreps)
+        # calculate logistics regression on the train dataset
+        fit <- suppressWarnings(glmnet(xdata[balanced.data$train,], 
+                                       ydata$logit_class[balanced.data$train], 
+                                       family = 'binomial', 
+                                       alpha  = target.alpha,
+                                       penalty.factor = target.penalty.factor,
+                                       # do it just for our target lambda
+                                       #  and 1. If it does not converge add
+                                       #  lambda values in between.
+                                       lambda = find.lambda(target.lambda)))
+        # get the coeficients of target.lambda
+        my.coef <- coef(fit, s = target.lambda)
+        # get the names of the non-zero coefficients
+        my.coef.names <- names(my.coef[-1,])[which(as.vector(my.coef[-1,]) != 0)]
+        flog.info('  Number of non-zero variables: %d', length(my.coef.names))
+        #
+        return(my.coef.names)
+      }, mc.cores = mc.cores)
+      save(target.alpha, glmnet.result, target.lambda, target.penalty.factor, target.penalty.name, sample.min, nreps, file = cache.file)
+    }
+    flog.info('  Calculating for:')
+    flog.info('         alpha: %f', target.alpha)
+    flog.info('    sample.min: %f', sample.min)
+    flog.info('         nreps: %d', nreps)
+    return(list(glmnet = glmnet.result, penalty.name = target.penalty.name, alpha = target.alpha))
+  })
+}
+```
+
+```{r count_variables, include=FALSE}
+#
+# Counts the variables
+#
+
+if (threshold.to.keep != -Inf) {
+  result.df <- data.frame()
+  for( ix in seq_along(multiple.runs)) {
+    res <- multiple.runs[[ix]]$glmnet
+    # initialize the vector of counts
+    row.ix            <- unique(unlist(res))
+    count.vars        <- array(0, length(row.ix))
+    names(count.vars) <- row.ix
+    # add 1 for every non-zero coefficient
+    for(ix.res in seq_along(res)) {
+      count.vars[res[[ix.res]]] <- count.vars[res[[ix.res]]] + 1
+    }
+    result.df <- rbind(result.df, data.frame(id      = row.ix, 
+                                             value   = count.vars, 
+                                             penalty = array(multiple.runs[[ix]]$penalty.name, length(row.ix)),
+                                             alpha   = array(multiple.runs[[ix]]$alpha, length(row.ix))))
+  }
+  result.df$type <- sprintf('%s - %2.2f', result.df$penalty, result.df$alpha)
+}
+```
+
+### Selected variables
+
+```{r plot_frequency, echo=FALSE}
+if (threshold.to.keep == -Inf) {
+  new.vars <- seq(ncol(xdata))
+  flog.info('No feature selection was performed as parameter \'threshold.to.keep\' = -Inf')
+} else {
+  new.vars <- unique(subset(dplyr::arrange(result.df, desc(value)), value >= nreps * threshold.to.keep)$id)
+  #
+  ggplot(data = subset(result.df, value >= nreps * threshold.to.keep)) + 
+  geom_freqpoly(aes(value, color = 1), binwidth = 25) +
+  facet_wrap(~type) +
+  scale_colour_continuous(guide = FALSE) + 
+#  scale_y_continuous(trans = 'log10') + 
+  theme_minimal() + 
+  ylab('Count (log10 scale)') + 
+  xlab(sprintf('Number of times variable appears in models (%d runs)\n Shows only variables that appear more than %g%% of the runs', nreps, threshold.to.keep * 100)) +
+  ggtitle(sprintf('Total number of variables selected: %d (out of %d)', length(new.vars), ncol(xdata)))
+
+}
+```
+
+## Train / Test dataset generation
+
+### Select balanced training and test sets
+
+```{r training_and_test, echo=FALSE}
+cache.file <- file.path('cache', sprintf('ransac.training.test.data-%s.%.3f.RData', 
+                                         data.origin, train.perc))
+
+if (file.exists(cache.file)) {
+  flog.info('Loading cache file: %s', cache.file)
+  load(cache.file)
+} else {
+  flog.info('Determing train and test datasets')
+  set.seed(my.seed)
+  
+  # obtain balanced training and test partitions
+  sets.ix <- balanced.train.and.test(which(ydata$logit_class == 1), 
+                                     which(ydata$logit_class == 0), 
+                                     train.perc = train.perc, join.all = T)
+  train.ix <- sets.ix$train
+  test.ix  <- sets.ix$test
+  
+  #  
+  xdata.train <- xdata[train.ix, new.vars]
+  ydata.train <- as.data.frame(ydata[train.ix,])
+  colnames(ydata.train) <- colnames(ydata)
+  #
+  xdata.test  <- xdata[test.ix, new.vars]
+  ydata.test <- as.data.frame(ydata[test.ix,])
+  colnames(ydata.test) <- colnames(ydata)
+  save(xdata.train, ydata.train, xdata.test, ydata.test, file = cache.file)
+}
+# Set of expression to be seen all at once
+{
+  flog.info('Description of Train partition:')
+  flog.info('  Cases: %d (Class 0) + %d (Class 1) = %d',
+            table(ydata.train$logit_class)[1],
+            nrow(ydata.train) - table(ydata.train$logit_class)[1],
+            nrow(ydata.train))
+  flog.info('')
+  flog.info('Description of Test partition:')
+  flog.info('  Cases: %d (Class 0) + %d (Class 1) = %d',
+            table(ydata.test$logit_class)[1],
+            nrow(ydata.test) - table(ydata.test$logit_class)[1],
+            nrow(ydata.test))
+}
+```
+
+
+## Baseline model
+
+```{r ransac_params, include=FALSE}
+#
+#
+#
+penalty.factor <- penalty.list$glmnet[new.vars]
+#
+force.skip.cache <- F
+```
+
+```{r lambda_ransac, include=FALSE}
+#
+# Find best lambdas if that is necessary
+#
+
+{
+  set.seed(my.seed)
+  #
+  cv.folds <- balanced.cv.folds(which(ydata.train$logit_class == 0), which(ydata.train$logit_class == 1))
+  foldid   <- array(0, nrow(ydata.train))
+  foldid[ydata.train$logit_class == 0] <- cv.folds$output[[1]]
+  foldid[ydata.train$logit_class == 1] <- cv.folds$output[[2]]
+  #   
+  flog.info('Running GLMNET with cross-validation to find lambda parameter')
+  baseline <- cv.glmnet(xdata.train, ydata.train$logit_class, family = 'binomial', 
+                        alpha            = alpha.baseline,
+                        nlambda          = 100, 
+                        lambda.min.ratio = lambda.min.ratio,
+                        #
+                        nfolds         = 10,
+                        foldid         = foldid,
+                        penalty.factor = penalty.factor,
+                        mc.cores       = 1)
+  lambda.baseline <- baseline$lambda.min
+  #
+  flog.info('  Found lambda = %g to use in RANSAC if necessary', lambda.baseline)
+}
+```
+
+```{r baseline.models}
+#
+# glm(logit_class~., data.frame(xdata, logit_class = ydata$logit_class), family = binomial(link = "logit"), control = glm.control(maxit = 1000))
+#
+baseline.model.pert <- family.fun$fit.model(xdata.train, ydata.train$logit_class,
+                                            lambda.baseline, penalty.factor = penalty.factor,
+                                            alpha          = alpha.baseline)
+
+baseline.model.pert.glm <- ransac.binomial.glm()$fit.model(xdata.train, ydata.train$logit_class,
+                                            lambda.baseline, penalty.factor = penalty.factor,
+                                            alpha          = alpha.baseline)
+#
+baseline.model.real <- family.fun$fit.model(xdata.train, ydata.train$real_class,
+                                            lambda.baseline, penalty.factor = penalty.factor,
+                                            alpha          = alpha.baseline)
+```
+
+### Description of outliers
+
+- Natural outliers: Observation which `P(XB)` from data generation model differs by more than `0.5` in class
+- Misclassification
+
+```{r description.baseline, echo=FALSE}
+miscl.pert <- ydata$real_class - round(family.fun$predict(baseline.model.pert, newx = xdata.train, lambda = lambda.baseline)) != 0
+miscl.real <- ydata$real_class - round(family.fun$predict(baseline.model.real, newx = xdata.train, lambda = lambda.baseline)) != 0
+
+#
+{
+  
+  if (sum(dataset.coef) != 0) {
+    flog.info('Coefficients:', 
+              data.frame(Original = dataset.coef, 
+                         baseline.real = as.vector(family.fun$coef(baseline.model.real, lambda = lambda.baseline)),
+                         baseline.pert = as.vector(family.fun$coef(baseline.model.pert, lambda = lambda.baseline))), capture = T)
+  }
+  flog.info('')
+  flog.info('Calculted baseline model with original data (%s)', family.fun$model.name)
+  flog.info('  Misclassifications: %d (# obs: %d)', sum(miscl.real), nrow(xdata.train))
+  if (sum(miscl.real) != 0) {
+    flog.info('  Which ones? %s', paste(rownames(xdata.train)[miscl.real], collapse = ', '))
+  } else { flog.info('  Perfect classification!')}
+  flog.info('')
+  flog.info('Calculted baseline model with perturbed data (%s)', family.fun$model.name)
+  flog.info('  Misclassifications:  %d (# obs: %d)',sum(miscl.pert), nrow(xdata.train))
+  if (sum(miscl.pert) != 0) {
+    flog.info('  Which ones? %s', paste(rownames(xdata.train)[miscl.pert], collapse = ', '))
+  } else { flog.info('  Perfect classification!')}
+  flog.info('')
+  flog.info('-----  Misclassification tables  ---------------')
+  flog.info('\n')
+
+  if (sum(miscl.real) != 0) {
+    my.miscl <- miscl.real
+    natural.outlier <- factor(ydata.train$real_class[which(my.miscl)] != 1*(ydata.train$prob[which(my.miscl)] > 0.5))
+    natural.outlier <- plyr::revalue(natural.outlier, c("TRUE"="Natural", "FALSE"=""))
+    prediction <- family.fun$predict(baseline.model.real, newx = xdata.train[which(my.miscl),], lambda = lambda.baseline)
+    #
+    print(data.frame(
+      natural.outlier = natural.outlier,
+      gene.class     = ydata.train$real_class[which(my.miscl)],
+      gene.prob  = ydata.train$prob[which(my.miscl)],
+      model.real      = prediction))
+  }
+  flog.info('\n')  
+    if (sum(miscl.pert) != 0) {
+      if (nrow(ydata) <= 100) {
+        my.miscl <- miscl.pert | ydata$logit_class != ydata$real_class
+      } else {
+        my.miscl <- miscl.pert
+      }
+      #
+      natural.outlier <- factor(ydata.train$real_class[which(my.miscl)] != 1*(ydata.train$prob[which(my.miscl)] > 0.5))
+      natural.outlier <- plyr::revalue(natural.outlier, c("TRUE"="Natural", "FALSE"=""))
+      #
+      prediction <- family.fun$predict(baseline.model.pert, newx = xdata.train[which(my.miscl),], lambda = lambda.baseline)
+      #
+      outlier    <- factor(ydata.train$real_class[which(my.miscl)] != 1*(prediction > 0.5))
+      outlier    <- plyr::revalue(outlier, c("TRUE"="Misclass.", "FALSE"=""))
+      #
+      perturbed <- factor((ydata$logit_class != ydata$real_class)[my.miscl])
+      perturbed <- plyr::revalue(perturbed, c("TRUE"="X", "FALSE"=""))
+      #
+      print(data.frame(
+        perturbed       = perturbed,
+        natural.outlier = natural.outlier,
+        gen.class = ydata.train$real_class[which(my.miscl)],
+        gen.prob  = ydata.train$prob[which(my.miscl)],
+        model.pert      = prediction,
+        outlier         = outlier))
+  }
+
+}
+```
+
+### Outlier index
+
+```{r outlier.ix}
+ydata[ydata$logit_class != ydata$real_class,]
+```
+
+### Natural Outliers
+
+```{r natural.outlier.ix}
+ydata[ydata$real_class != 1*(ydata$prob > 0.5),]
+```
+
+
+## RANSAC
+
+#### Run RANSAC
+
+Original Dataset (without perturbation)
+
+```{r ransac.real.nothing, eval=FALSE}
+ransac::ransac(xdata  = xdata.train, 
+               ydata  = ydata.train$real_class, 
+               k      = k, 
+               n      = n, 
+               family = my.family, 
+               #
+               threshold      = threshold, 
+               good.fit.perct = good.fit.perct, 
+               #
+               mc.cores       = mc.cores,
+               lambda         = lambda.baseline,
+               alpha          = alpha.baseline,
+               penalty.factor = penalty.factor)
+```
+
+```{r ransac.real, echo=FALSE}
+cache.file <- file.path('cache', sprintf('ransac-real-%s.%d.%d.%d.%.4f.%s.%d.%.4f.%.4f.RData', 
+                                         data.origin, nrow(xdata.train), ncol(xdata.train), k, 
+                                         lambda.baseline,
+                                         my.family, n, threshold, good.fit.perct))
+
+if (!force.skip.cache && file.exists(cache.file)) {
+  flog.info('Loading cache with ransac results: %s', cache.file)
+  load(cache.file)
+} else  {
+  flog.info('Running RANSAC')
+  set.seed(my.seed)
+  result.ransac.real <- ransac::ransac(xdata  = xdata.train, 
+                                  ydata  = ydata.train$real_class, 
+                                  k      = k, 
+                                  n      = n, 
+                                  family = my.family, 
+                                  #
+                                  threshold      = threshold, 
+                                  good.fit.perct = good.fit.perct, 
+                                  #
+                                  mc.cores       = mc.cores,
+                                  lambda         = lambda.baseline,
+                                  alpha          = alpha.baseline,
+                                  penalty.factor = penalty.factor)
+  save(k, my.family, n, threshold, good.fit.perct, result.ransac.real, file = cache.file)
+}
+```
+
+Dataset with perturbation
+
+```{r ransac.pertr.nothing, eval=FALSE}
+ransac::ransac(xdata  = xdata.train, 
+               ydata  = ydata.train$logit_class, 
+               k      = k, 
+               n      = n, 
+               family = my.family, 
+               #
+               threshold      = threshold, 
+               good.fit.perct = good.fit.perct, 
+               #
+               mc.cores       = mc.cores,
+               lambda         = lambda.baseline,
+               alpha          = alpha.baseline,
+               penalty.factor = penalty.factor)
+```
+
+
+```{r ransac.pert, echo=FALSE}
+cache.file <- file.path('cache', sprintf('ransac-pert-%s.%d.%d.%d.%.4f.%s.%d.%.4f.%.4f.RData', 
+                                         data.origin, nrow(xdata.train), ncol(xdata.train), k, 
+                                         lambda.baseline,
+                                         my.family, n, threshold, good.fit.perct))
+
+if (!force.skip.cache && file.exists(cache.file)) {
+  flog.info('Loading cache with ransac results: %s', cache.file)
+  load(cache.file)
+} else  {
+  flog.info('Running RANSAC')
+  set.seed(my.seed)
+  result.ransac.pert <- ransac::ransac(xdata  = xdata.train, 
+                                  ydata  = ydata.train$logit_class, 
+                                  k      = k, 
+                                  n      = n, 
+                                  family = my.family, 
+                                  #
+                                  threshold      = threshold, 
+                                  good.fit.perct = good.fit.perct, 
+                                  #
+                                  mc.cores       = mc.cores,
+                                  lambda         = lambda.baseline,
+                                  alpha          = alpha.baseline,
+                                  penalty.factor = penalty.factor)
+  save(k, my.family, n, threshold, good.fit.perct, result.ransac.pert, file = cache.file)
+}
+```
+
+### Plot the results
+
+#### Test dataset
+
+Distance to class
+
+```{r test_plot}
+#
+if (train.perc == 1) {
+  flog.info('No test set being calculated as no test set is being used (train.perc = %g)', train.perc)
+} else {
+  info.test <- plot(result.ransac.pert, xdata = xdata.test, 
+                    ydata          = ydata.test$real_class,
+                    baseline       = baseline.model.pert,
+                    family         = my.family, 
+                    name           = paste0(dataset.name, ' (distance to class)'),
+                    lambda         = lambda.baseline,
+                    alpha          = alpha,
+                    only_consensus = F)
+}
+```
+
+#### Training dataset
+
+Distance to class
+
+```{r train_plot}
+#
+#
+if (train.perc == 1) {
+  flog.info('No test set being calculated as no test set is being used (train.perc = %g)', train.perc)
+} else {
+  info.train <- plot(result.ransac.pert, xdata = xdata.train, 
+                     ydata          = ydata.train$real_class,
+                     baseline       = baseline.model.pert,
+                     family         = my.family, 
+                     name           = paste0(dataset.name, ' (distance to class)'),
+                     lambda         = lambda.baseline,
+                     alpha          = alpha.baseline,
+                     only_consensus = F)
+}
+```
+
+#### All data
+
+Distance to class
+
+```{r all.plot.real}
+#
+info.all <- plot(result.ransac.real, xdata = xdata[, new.vars], 
+                 ydata            = ydata$real_class,
+                 family           = my.family, 
+                 baseline         = baseline.model.pert,
+                 name             = paste0('Original ', dataset.name, ' (Distance to Real Class)'),
+                 lambda           = lambda.baseline,
+                 alpha            = alpha.baseline,
+                 only_consensus   = F,
+                 outliers         = outlier.description(ydata))
+```
+
+Dataset with perturbation
+
+```{r all.plot.pert}
+info.all <- plot(result.ransac.pert, xdata = xdata[, new.vars], 
+                 ydata          = ydata$real_class,
+                 family         = my.family, 
+                 baseline       = baseline.model.pert,
+                 name           = paste0('Perturbed ', dataset.name, ' (Distance to Real Class)'),
+                 lambda         = lambda.baseline,
+                 alpha          = alpha.baseline,
+                 only_consensus = F,
+                 outliers       = outlier.description(ydata, include.perturb = T))
+```
+
+
+## Test to support some decisions on the pipeline
+
+### Perfect model (saturated)
+
+```{r perfect.model, eval=FALSE}
+lambda.v <- find.lambda(lambda.baseline)
+perfect.model <- glmnet(xdata[, new.vars], ydata$logit_class,
+       alpha = alpha.baseline,
+       family = 'binomial',
+       lambda = lambda.v,
+       penalty.factor = NULL)
+summary(as.vector(coef(perfect.model, s = lambda.baseline)))
+summary(predict(perfect.model, newx = xdata[, new.vars], type = 'response', s = lambda.baseline) - ydata$logit_class)
+#
+new.vars.perfect <- rownames(coef(perfect.model, s = lambda.baseline) != 0)[-1]
+
+my.ridge <- glmnet(xdata[, new.vars.perfect], ydata$logit_class,
+       alpha = 0,
+       family = 'binomial',
+       #lambda = lambda.v)
+       nlambda = 100,
+       lambda.min.ratio = 1e-10)
+len <- 100
+len <- length(lambda.v)
+ydata.rep <- as.data.frame(matrix(rep(ydata$logit_class, len), ncol = len, nrow = nrow(ydata)))
+ridge.predict <- predict(my.ridge, newx = xdata[, new.vars.perfect], type = 'response') - ydata.rep
+apply(ridge.predict, 2, function(e){ max(abs(e))})
+```
+
+
+## AUC example
+
+```{r auc_example, eval=FALSE}
+len <- 1500
+
+set.seed(my.seed)
+nvars     <- 100
+xdata.auc <- sapply(seq(nvars), function(e, len) { rnorm(len)}, len)
+coef.auc  <- seq(nvars) * runif(nvars)
+#
+z  <- 1 + xdata.auc %*% coef.auc           # linear combination with a bias
+pr <- 1/(1+exp(-z))            # pass through an inv-logit function
+y  <- factor(rbinom(len,1,pr))  # bernoulli response variable
+y.pert <- y
+perturbation.ix <- sample(seq_along(y), round(len * .1))
+y.pert[perturbation.ix] <- (as.numeric(as.vector(y[perturbation.ix])) - 1)* -1
+#
+df <- data.frame(y.pert,xdata.auc)
+my.model <- glm( y.pert ~ ., data=df,family="binomial")
+
+my.roc <- AUC::roc(predict(my.model, type = 'response'), labels = y)
+my.auc <- AUC::auc(my.roc)
+flog.info('Y original auc: %g', my.auc)
+plot(my.roc)
+title(sprintf('Y Original -- AUC = %g', my.auc))
+
+my.roc.2 <- AUC::roc(predict(my.model, type = 'response'), labels = y.pert)
+my.auc.2 <- AUC::auc(my.roc.2)
+plot(my.roc.2)
+title(sprintf('Y with Perturbation -- AUC = %g', my.auc.2))
+```
+
+## Three dot elipsis
+
+```{r, eval=FALSE}
+three.dot <- function(...) {
+  arguments <- list(...)
+  flog.info('aca %s', arguments$aca)
+}
+three.dot(aca = 12)
+```
+

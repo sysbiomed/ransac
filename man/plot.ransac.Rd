@@ -4,9 +4,9 @@
 \alias{plot.ransac}
 \title{Function to print the results from RANSAC}
 \usage{
-\method{plot}{ransac}(results.ransac, xdata, ydata, family = "binomial",
-  name = "", ydata.original = NULL, show.title = T, only_consensus = T,
-  ...)
+\method{plot}{ransac}(result.ransac, xdata, ydata, ydata.prob = NULL,
+  family = "binomial", name = "", baseline = list(), show.title = T,
+  only_consensus = T, ...)
 }
 \arguments{
 \item{...}{}
