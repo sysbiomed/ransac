@@ -19,7 +19,10 @@ plot.ransac <- function(result.ransac, xdata, ydata,
                         family = 'binomial', name = '',
                         baseline = list(), show.title = T,
                         only_consensus = T, outliers = NULL,
+                        show.misclass = T,
                         ...) {
+  strOut <- textConnection("foo", open = 'w')
+  sink(strOut)
   #
   # retrieve family by name
   if (is.character(family)) {
@@ -38,7 +41,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   }
 
   #
-  flog.info('Results for k = %d iterations', length(result.ransac$error.array))
+  cat(sprintf('Results for k = %d iterations', length(result.ransac$error.array)), file = strOut, sep = '\n')
 
   # Populate penalty.factor as 1 if is not defined
   if (!exists('penalty.factor')) {
@@ -57,26 +60,40 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   # build from result.ransac
   if (!only_consensus) {
     #
-    description$rans.5 <- 'RANSAC Initial + Inliers'
-    models$rans.5      <- result.ransac$models$inliers.inliers.ydata
-    description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
-    models$rans.2      <- result.ransac$models$inliers.all.ydata
-    description$rans.3 <- 'RANSAC Refitted + Inliers'
-    models$rans.3      <- result.ransac$models$all.inliers.model.inliers
-    description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
-    models$rans.4      <- result.ransac$models$all.inliers.all.ydata
-    description$ransac <- 'RANSAC Refitted + Consensus'
+    if (!is.na(result.ransac$models$inliers.inliers.ydata)) {
+      description$rans.5 <- 'RANSAC Initial + Inliers'
+      models$rans.5      <- result.ransac$models$inliers.inliers.ydata
+    }
+    if (!is.na(result.ransac$models$inliers.all.ydata)) {
+      description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
+      models$rans.2      <- result.ransac$models$inliers.all.ydata
+    }
+    if (!is.na(result.ransac$models$all.inliers.model.inliers)) {
+      description$rans.3 <- 'RANSAC Refitted + Inliers'
+      models$rans.3      <- result.ransac$models$all.inliers.model.inliers
+    }
+    if (!is.na(result.ransac$models$all.inliers.all.ydata)) {
+      description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
+      models$rans.4      <- result.ransac$models$all.inliers.all.ydata
+    }
+    if (!is.na(result.ransac$models$all.inliers.consensus)) {
+      description$ransac <- 'RANSAC Refitted + Consensus'
+    }
   } else {
-    description$ransac <- 'RANSAC'
+    if (!is.na(result.ransac$models$all.inliers.consensus)) {
+      description$ransac <- 'RANSAC'
+    }
   }
-  models$ransac      <- result.ransac$models$all.inliers.consensus
+  if (!is.na(result.ransac$models$all.inliers.consensus)) {
+    models$ransac      <- result.ransac$models$all.inliers.consensus
+  }
 
   # check if argument exists or is empty list
   if(is.null(baseline) || (is.list(baseline) && length(baseline) == 0)) {
     models$baseline      <- family.fun$fit.model(xdata, ydata, ...)
     description$baseline <- 'Baseline'
     if (any(models$baseline[[family]]$lambda == Inf)) {
-      flog.info('Error when fitting baseline')
+      cat(sprintf('Error when fitting baseline'), file = strOut, sep = '\n')
       return()
     }
   }
@@ -87,7 +104,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   }
   # else build from baseline argument
   else {
-    flog.info('Using given baseline model')
+    cat(sprintf('Using given baseline model'), file = strOut, sep = '\n')
 
     for(ix in names(baseline)) {
       models[[ix]]      <- baseline[[ix]]
@@ -159,47 +176,51 @@ plot.ransac <- function(result.ransac, xdata, ydata,
 
   #
   # Classification plot
-  g <- ggplot(data = my.df.class) +
-    theme_minimal() +
+  g1 <- ggplot(data = my.df.class) +
+    geom_vline(aes(xintercept = (sum(ydata == 0) + 0.5)), color = 'black', linetype = 'dotted') +
+    geom_text(aes(x=sum(ydata == 0)/2), y = 1.05, label= "Class 0", color = '#999999', family = 'Helvetica-Narrow', size = 3.5) +
+    geom_text(aes(x=sum(ydata == 0) + sum(ydata == 1) / 2), y = 1.05, label= "Class 1", color = '#999999', family = 'Helvetica-Narrow', size = 3.5) +
+    scale_y_continuous(expand = c(0,.1)) +
+    theme_minimal() + theme(legend.position="none") +
     ylab('Classification') +
     xlab('Model') +
-    geom_point(aes(ix, value, color = type)) + facet_wrap( ~ type , ncol = 2)
+    geom_point(aes(ix, value, color = type)) + facet_wrap( ~ type , ncol = 3)
   #
-  if (show.title)      { g <- g + ggtitle(name) }
-  if (!only_consensus) { g <- g + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  print(g)
+  if (show.title)      { g1 <- g1 + ggtitle(name) }
+  if (!only_consensus) { g1 <- g1 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
+  print(g1)
 
   #
   # Error plot
-  g <- ggplot(data = my.df) +
-    theme_minimal() +
+  g2 <- ggplot(data = my.df) +
+    theme_minimal() + theme(legend.position="none") +
     ylab('Error') + xlab('Model') +
     geom_quasirandom(aes(type, value, color = type), bandwidth = 2, method = 'quasirandom') +
     scale_y_continuous(limits = c(-1,1))
-  if (show.title)      { g <- g + ggtitle(name) }
-  if (!only_consensus) { g <- g + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  print(g)
+  if (show.title)      { g2 <- g2 + ggtitle(name) }
+  if (!only_consensus) { g2 <- g2 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
+  print(g2)
 
   #
   # Textual results
   #
 
   #
-  flog.info('Information on RANSAC and Baseline model')
+  cat(sprintf('Information on RANSAC and Baseline model'), file = strOut, sep = '\n')
   non.zero <- list()
   has.shown.sep <- F
   for(ix in results.names) {
     non.zero[[ix]] <- family.fun$coef(models[[ix]], ...)[-1] != 0
     if (ix %in% names(baseline)) {
       has.shown.sep <- T
-      flog.info('----------------- Baseline ----------')
+      cat(sprintf('----------------- Baseline ----------'), file = strOut, sep = '\n')
     }
-    flog.info('  %d Co-Var. % 4d Obs %e %s in %s',
+    cat(sprintf('  %d Co-Var. % 4d Obs %e %s in %s',
               sum(non.zero[[ix]]),
               family.fun$nobs(models[[ix]]),
               my.rmse[[ix]],
               family.fun$model.error.type,
-              description[[ix]])
+              description[[ix]]), file = strOut, sep = '\n')
   }
 
   #
@@ -207,50 +228,58 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   #
 
   #
-  flog.info('')
-  flog.info('')
-  flog.info('False Positive/Negative')
+  cat(sprintf(''), file = strOut, sep = '\n')
+  cat(sprintf(''), file = strOut, sep = '\n')
+  cat(sprintf('False Positive/Negative'), file = strOut, sep = '\n')
   for(ix in results.names) {
-    flog.info('  % 3d / % 3d (total: % 3d) -- %s',
+    cat(sprintf('  % 3d / % 3d (total: % 3d) -- %s',
               sum(miscl[[ix]]$false.pos),
               sum(miscl[[ix]]$false.neg),
               sum(miscl[[ix]]$false.pos) + sum(miscl[[ix]]$false.neg),
-              description[[ix]])
+              description[[ix]]), file = strOut, sep = '\n')
   }
 
   #
+  outlier.other.name <- 'Other'
   if (is.null(outliers)) {
     outliers <- factor(array('', length(ydata)))
+    outlier.other.name <- 'Miscl.'
   }
-  flog.info('')
-  flog.info('')
-  flog.info('Misclassifications index')
-  for(ix in results.names) {
-    natural.pos <- miscl[[ix]]$false.pos & outliers == 'Natural'
-    natural.neg <- miscl[[ix]]$false.neg & outliers == 'Natural'
-    #
-    perturbed.pos <- miscl[[ix]]$false.pos & outliers == 'Perturbed'
-    perturbed.neg <- miscl[[ix]]$false.neg & outliers == 'Perturbed'
-    #
-    both.pos <- miscl[[ix]]$false.pos & outliers == 'Natural and Perturbed'
-    both.neg <- miscl[[ix]]$false.neg & outliers == 'Natural and Perturbed'
-    #
-    other.pos <- miscl[[ix]]$false.pos & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
-    other.neg <- miscl[[ix]]$false.neg & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
-    #
-    {
-    flog.info('')
-    flog.info('  %s', description[[ix]])
-    flog.info('    False Positives % 4d', sum(miscl[[ix]]$false.pos))
-    flog.info('           Natural (% 4d) %s', sum(natural.pos),   paste(which(natural.pos), collapse = ', '))
-    flog.info('           Pertur. (% 4d) %s', sum(perturbed.pos), paste(which(perturbed.pos), collapse = ', '))
-    flog.info('      Nat. + Pert. (% 4d) %s', sum(both.pos),      paste(which(both.pos), collapse = ', '))
-    flog.info('             Other (% 4d) %s', sum(other.pos),     paste(which(other.pos), collapse = ', '))
-    flog.info('    False Negatives % 4d', sum(miscl[[ix]]$false.pos))
-    flog.info('           Natural (% 4d) %s', sum(natural.neg),   paste(which(natural.neg), collapse = ', '))
-    flog.info('           Pertur. (% 4d) %s', sum(perturbed.neg), paste(which(perturbed.neg), collapse = ', '))
-    flog.info('      Nat. + Pert. (% 4d) %s', sum(both.neg),      paste(which(both.neg), collapse = ', '))
-    flog.info('             Other (% 4d) %s', sum(other.neg),     paste(which(other.neg), collapse = ', '))
+  cat(sprintf(''), file = strOut, sep = '\n')
+  if (show.misclass) {
+    cat(sprintf(''), file = strOut, sep = '\n')
+    cat(sprintf('Misclassifications index'), file = strOut, sep = '\n')
+    for(ix in results.names) {
+      natural.pos <- miscl[[ix]]$false.pos & outliers == 'Natural'
+      natural.neg <- miscl[[ix]]$false.neg & outliers == 'Natural'
+      #
+      perturbed.pos <- miscl[[ix]]$false.pos & outliers == 'Perturbed'
+      perturbed.neg <- miscl[[ix]]$false.neg & outliers == 'Perturbed'
+      #
+      both.pos <- miscl[[ix]]$false.pos & outliers == 'Natural and Perturbed'
+      both.neg <- miscl[[ix]]$false.neg & outliers == 'Natural and Perturbed'
+      #
+      other.pos <- miscl[[ix]]$false.pos & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
+      other.neg <- miscl[[ix]]$false.neg & outliers != 'Natural and Perturbed' & outliers != 'Natural' & outliers != 'Perturbed'
+      #
+      {
+      cat(sprintf(''), file = strOut, sep = '\n')
+      cat(sprintf('  %s', description[[ix]]), file = strOut, sep = '\n')
+      cat(sprintf('    False Positives % 4d', sum(miscl[[ix]]$false.pos)), file = strOut, sep = '\n')
+      if (length(levels(outliers)) > 1) {
+        cat(sprintf('           Natural (% 4d) %s', sum(natural.pos),   paste(which(natural.pos), collapse = ', ')), file = strOut, sep = '\n')
+        cat(sprintf('           Pertur. (% 4d) %s', sum(perturbed.pos), paste(which(perturbed.pos), collapse = ', ')), file = strOut, sep = '\n')
+        cat(sprintf('      Nat. + Pert. (% 4d) %s', sum(both.pos),      paste(which(both.pos), collapse = ', ')), file = strOut, sep = '\n')
+      }
+      cat(sprintf('             %s (% 4d) %s', outlier.other.name, sum(other.pos),     paste(which(other.pos), collapse = ', ')), file = strOut, sep = '\n')
+      cat(sprintf('    False Negatives % 4d', sum(miscl[[ix]]$false.neg)), file = strOut, sep = '\n')
+      if (length(levels(outliers)) > 1) {
+        cat(sprintf('           Natural (% 4d) %s', sum(natural.neg),   paste(which(natural.neg), collapse = ', ')), file = strOut, sep = '\n')
+        cat(sprintf('           Pertur. (% 4d) %s', sum(perturbed.neg), paste(which(perturbed.neg), collapse = ', ')), file = strOut, sep = '\n')
+        cat(sprintf('      Nat. + Pert. (% 4d) %s', sum(both.neg),      paste(which(both.neg), collapse = ', ')), file = strOut, sep = '\n')
+      }
+      cat(sprintf('             %s (% 4d) %s', outlier.other.name, sum(other.neg),     paste(which(other.neg), collapse = ', ')), file = strOut, sep = '\n')
+      }
     }
   }
 
@@ -262,10 +291,13 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   }
   rownames(coef.df) <- unlist(description)
   colnames(coef.df) <- c('Intercept', colnames(xdata))
-  flog.info('Coefficients:', coef.df, capture = T)
+  cat(sprintf('Coefficients:'), file = strOut, sep = '\n')
+  cat(capture.output(coef.df), file = strOut, sep = '\n')
 
+  sink()
+  close(strOut)
   #
   # return the misclassifications
-  return(list(description = description, misclassifications = miscl))
+  return(list(debug = foo, description = description, misclassifications = miscl))
 }
 

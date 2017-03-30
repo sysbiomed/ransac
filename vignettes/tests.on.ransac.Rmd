@@ -1,0 +1,59 @@
+---
+title: "Tests"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+devtools::load_all('.')
+library(futile.logger)
+library(parallel)
+library(ggplot2)
+library(reshape2)
+flog.layout(layout.format('~m'))
+```
+
+## Sampling functions in RANSAC family
+
+```{r}
+# generate data
+my.data <- gen.synth(obs = 100, 
+                     new.coef = c(0, 3, -2, 1))
+
+# number of sampling iterations
+k <- 10000
+
+# generate from glm sampling
+my.data.sample <- mclapply(seq(k), function(ix) { 
+  ransac.binomial.glm()$sample(my.data$ydata$logit_class, n = 30) 
+  }, mc.cores = 10)
+
+# table of counts
+my.counts <- as.vector(table(unlist(my.data.sample)))
+flog.info('Summary of counts', summary(my.counts), capture = T)
+
+# plot
+ggplot(melt(unlist(my.data.sample))) +
+  geom_freqpoly(aes(value), binwidth = 1) + 
+  lims(x = c(1,100)) + theme_minimal() +
+  scale_y_continuous(expand = c(.5, .5), limits = c(min(my.counts), max(my.counts)))
+
+# generate from glmnet sampling (same function as before)
+my.data.sample <- mclapply(seq(k), function(ix) { 
+  ransac.binomial.glm()$sample(my.data$ydata$logit_class, n = 30) 
+  }, mc.cores = 10)
+
+# table of counts
+my.counts <- as.vector(table(unlist(my.data.sample)))
+flog.info('Summary of counts', summary(my.counts), capture = T)
+
+# plot
+ggplot(melt(unlist(my.data.sample))) +
+  geom_freqpoly(aes(value), binwidth = 1) + 
+  lims(x = c(1,100)) + theme_minimal() +
+  scale_y_continuous(expand = c(.5, .5), limits = c(min(my.counts), max(my.counts)))
+```
+

@@ -7,7 +7,7 @@
 #' @export
 #'
 #' @examples
-ransac.binomial.glm <- function(auc = F, residuals = 'deviance') {
+ransac.binomial.glm <- function(auc = F, residuals = 'pearson') {
   #
   #
   # Functions
@@ -17,7 +17,7 @@ ransac.binomial.glm <- function(auc = F, residuals = 'deviance') {
   }
 
   # Take valid sample
-  sample.fun     <- function(ydata, n, min.el = n/3) {
+  sample.fun     <- function(ydata, n, min.el = max(c(1,round(n/3)))) {
     ydata.factor <- factor(ydata)
     ydata.ix     <- seq_along(ydata)
     equal.list   <- list()
@@ -51,7 +51,7 @@ ransac.binomial.glm <- function(auc = F, residuals = 'deviance') {
     return((ydata - ydata.predicted)^2)
   }
 
-  # Deviance
+  # Pearson
   error.dev.fun <- function(ydata, ydata.predicted) {
     return(abs((ydata - ydata.predicted)/sqrt(ydata.predicted*(1-ydata.predicted))))
   }
@@ -78,24 +78,25 @@ ransac.binomial.glm <- function(auc = F, residuals = 'deviance') {
   }
 
   # fitting model
-  fit.fun <- function(xdata, ydata, ...) {
+  fit.fun <- function(xdata, ydata, intercept = T, ...) {
     # generate balanced folds for the cross-validation
 
     new.df <- data.frame(xdata, logit_class = ydata)
     my.model <- glm(logit_class ~. , data = new.df, family = binomial(link = 'logit'),
-                    control = glm.control(maxit = 1000))
+                    control = glm.control(maxit = 1000),
+                    intercept = intercept)
     return(my.model)
     #
   }
 
-  model.error.type <- if (auc) 'AUC' else 'RME'
+  model.error.type <- if (auc) 'AUC' else 'Squared Error'
   #
   error.type.fun <- switch(residuals,
                            squared.error = error.fun,
-                           deviance      = error.dev.fun)
+                           pearson       = error.dev.fun)
   error.type.txt <- switch(residuals,
-                           "squared.error" = 'Squared Error',
-                           "deviance"      = 'Deviance Residuals')
+                           squared.error = 'Squared Error',
+                           pearson       = 'Pearson Residuals')
 
   #
   return(list(

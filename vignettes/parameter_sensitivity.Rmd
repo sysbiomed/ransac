@@ -1,0 +1,63 @@
+---
+title: "Parameter Sensitivity"
+output:
+  html_document:
+    dev: svg
+    toc: yes
+  github_document:
+    dev: svg
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE}
+library(reshape2)
+library(ggplot2)
+library(futile.logger)
+```
+
+```{r fun, echo=FALSE}
+print.sensitivy <- function(cache.file, data.org){
+  load(cache.file)
+  for (data.type in sort(unique(overall.df$data))) {
+    for (data.family in sort(unique(subset(overall.df, data == data.type)$family))) {
+      data.type.df <- subset(overall.df, data == data.type & family == data.family)
+      flog.info('Unique for %s / %s (%d observations)', data.type, data.family, nrow(data.type.df))
+      flog.info('              n (%d): %s', length(unique(data.type.df$n)), paste(sort(unique(data.type.df$n)), collapse = ', '))
+      flog.info('      threshold (%d): %s', length(unique(data.type.df$threshold)), paste(sort(unique(data.type.df$threshold)), collapse = ', '))
+      flog.info('  good.fit.perc (%d): %s', length(unique(data.type.df$good.fit.perc)), paste(sort(unique(data.type.df$good.fit.perc)), collapse = ', '))
+      flog.info('----------------------')
+      ##
+      overall.n <- 30
+      overall.good.fit.perc <- .4
+      data.type.df.melt <- melt(data.type.df, c(1,2,3,4,5,6,7), c(8,11,14,17,20,23), value.name = 'Outliers', variable.name = 'Criteria')
+      g <- ggplot(data = data.type.df.melt, aes(x = threshold, y = Outliers, color = Criteria)) + theme_minimal() +
+        ggtitle(sprintf('%s -- data: %s -- family: %s', data.org, data.type, data.family))
+      print(g + geom_line(linetype = 'dotted') + geom_point())
+    }
+  }
+}
+```
+
+
+# Print Parameter Sensitivity
+
+```{r}
+cache.files <- list(original  = file.path('cache', 'overall.RData'), 
+                    perturbed = file.path('cache', 'overall.pert.RData'))
+```
+
+## Original Data
+
+```{r print.overall}
+print.sensitivy(cache.files$original, data.org = 'original')
+```
+
+## Perturbed Data
+
+```{r print.overall.pert}
+print.sensitivy(cache.files$perturbed, data.org = 'perturbed')
+```

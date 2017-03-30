@@ -9,7 +9,7 @@
 #' @export
 #'
 #' @examples
-ransac.binomial.glmnet <- function(auc = F, residuals = 'deviance') {
+ransac.binomial.glmnet <- function(auc = F, residuals = 'pearson') {
   #
   #
   # Functions
@@ -47,9 +47,10 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'deviance') {
 
   # Fitting model
   fit.fun <- function(xdata, ydata, lambda, alpha = 0, penalty.factor = array(1, ncol(xdata)),
+                      intercept = TRUE,
                       ...) {
     # need more than one lambda to guarantee convergence
-    lambda.v <- sort(c(1000,100, 10, c(50, 10, 5, 4, 3, 2, 1.5, 1) * lambda), decreasing = T)
+    lambda.v <- find.lambda(lambda)
 
     # need to suppress wanrings
     return(suppressWarnings(glmnet(xdata, ydata,
@@ -57,6 +58,7 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'deviance') {
                                    family = 'binomial',
                                    lambda = lambda.v,
                                    standardize = F,
+                                   intercept= FALSE,
                                    penalty.factor = penalty.factor)))
     #
   }
@@ -81,7 +83,7 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'deviance') {
     # threshold comparison
     threshold.cmp = threshold.cmp.fun,
     # model name
-    model.name = sprintf('GLMNET (%s)', model.error.type),
+    model.name = sprintf('GLMNET (%s)', parent.family$model.error.type),
     # Model Error function name
     model.error.type = parent.family$model.error.type,
     # Error function name

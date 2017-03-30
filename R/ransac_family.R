@@ -10,14 +10,14 @@
 ransac.family <- function(family) {
   if (is.character(family)) {
     family.fun <- switch(family,
-                         binomial.glmnet        = ransac.binomial.glmnet(auc = F, residuals = 'deviance'),
+                         binomial.glmnet        = ransac.binomial.glmnet(auc = F, residuals = 'pearson'),
                          binomial.glmnet.se     = ransac.binomial.glmnet(auc = F, residuals = 'squared.error'),
-                         binomial.glmnet.auc    = ransac.binomial.glmnet(auc = T, residuals = 'deviance'),
+                         binomial.glmnet.auc    = ransac.binomial.glmnet(auc = T, residuals = 'pearson'),
                          binomial.glmnet.se.auc = ransac.binomial.glmnet(auc = T, residuals = 'squared.error'),
                          #
-                         binomial.glm        = ransac.binomial.glm(auc = F, residuals = 'deviance'),
+                         binomial.glm        = ransac.binomial.glm(auc = F, residuals = 'pearson'),
                          binomial.glm.se     = ransac.binomial.glm(auc = F, residuals = 'squared.error'),
-                         binomial.glm.auc    = ransac.binomial.glm(auc = T, residuals = 'deviance'),
+                         binomial.glm.auc    = ransac.binomial.glm(auc = T, residuals = 'pearson'),
                          binomial.glm.se.auc = ransac.binomial.glm(auc = T, residuals = 'squared.error'))
   } else {
     family.fun <- family

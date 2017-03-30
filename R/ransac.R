@@ -16,7 +16,7 @@
 #' @examples
 ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
                    k = 100,
-                   family = 'binomial',
+                   family = 'binomial.glm',
                    mc.cores = 1, ...) {
   arguments <- list(...)
   #
@@ -63,6 +63,15 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
                length(also.inliners.ix),
                nrow(xdata.min),
                length(also.inliners.ix) + nrow(xdata.min))
+    if (flog.threshold() == 'INFO') {
+      flog.info('RANSAC (% 5d / % 5d): Inliners (needs minimum of %.2f / %d): %d + %d = %d',
+                 ix, k,
+                 good.fit.perct * nrow(xdata),
+                 nrow(xdata),
+                 length(also.inliners.ix),
+                 nrow(xdata.min),
+                 length(also.inliners.ix) + nrow(xdata.min))
+    }
     #
     # Check if the model is good
     if (length(also.inliners.ix) + nrow(xdata.min) >= nrow(xdata) * good.fit.perct) {
@@ -148,18 +157,23 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
   # Setting temporary variables to keep the best model
   best.error.inliers.inliers.ydata <- Inf
   best.model.inliers.inliers.ydata <- NA
+  best.error.ix.inliers.inliers.ydata <- NA
   #
   best.model.inliers.all.ydata <- NA
   best.error.inliers.all.ydata <- Inf
+  best.error.ix.inliers.all.ydata <- NA
   #
   best.model.all.inliers.all <- NA
   best.error.all.inliers.all <- Inf
+  best.error.ix.all.inliers.all <- NA
   #
   best.model.all.inliers.consensus <- NA
   best.error.all.inliers.consensus <- Inf
+  best.error.ix.all.inliers.consensus <- NA
   #
   best.model.all.inliers.model.inliers <- NA
   best.error.all.inliers.model.inliers <- Inf
+  best.error.ix.all.inliers.model.inliers <- NA
   #
   lapply(seq_along(error.array), function(ix) {
     el <- error.array[[ix]]
@@ -177,6 +191,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     if (!is.null(res)) {
       best.error.inliers.inliers.ydata <<- res$best.error
       best.model.inliers.inliers.ydata <<- res$best.model
+      best.error.ix.inliers.inliers.ydata <<- ix
     }
 
     # model from initial set of inliers
@@ -186,6 +201,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     if (!is.null(res)) {
       best.error.inliers.all.ydata <<- res$best.error
       best.model.inliers.all.ydata <<- res$best.model
+      best.error.ix.inliers.all.ydata <<- ix
     }
 
     #
@@ -198,6 +214,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     if (!is.null(res)) {
       best.error.all.inliers.all <<- res$best.error
       best.model.all.inliers.all <<- res$best.model
+      best.error.ix.all.inliers.all <<- ix
     }
 
     # model from all inliers (inliers + maybe.inliers)
@@ -207,6 +224,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     if (!is.null(res)) {
       best.error.all.inliers.model.inliers <<- res$best.error
       best.model.all.inliers.model.inliers <<- res$best.model
+      best.error.ix.all.inliers.model.inliers <<- ix
     }
 
     # model from all inliers (inliers + maybe.inliers)
@@ -217,6 +235,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
     if (!is.null(res)) {
       best.error.all.inliers.consensus <<- res$best.error
       best.model.all.inliers.consensus <<- res$best.model
+      best.error.ix.all.inliers.consensus <<- ix
     }
 
     # trims down size of cache and memory usage
@@ -237,6 +256,12 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
                                all.inliers.all.ydata     = best.error.all.inliers.all,
                                all.inliers.model.inliers = best.error.all.inliers.model.inliers,
                                all.inliers.consensus     = best.error.all.inliers.consensus),
+                 #
+                 best.ix = list(inliers.inliers.ydata     = best.error.ix.inliers.inliers.ydata,
+                                inliers.all.ydata         = best.error.ix.inliers.all.ydata,
+                                all.inliers.all.ydata     = best.error.ix.all.inliers.all,
+                                all.inliers.model.inliers = best.error.ix.all.inliers.model.inliers,
+                                all.inliers.consensus     = best.error.ix.all.inliers.consensus),
                  #
                  error.array = error.array )
   #
