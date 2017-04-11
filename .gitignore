@@ -1,4 +1,10 @@
 .Rproj.user
 .Rhistory
-.RData
+*.RData
 .Ruserdata
+*.html
+output/
+cache/
+vignettes/output
+vignettes/cache
+**/logger.txt
