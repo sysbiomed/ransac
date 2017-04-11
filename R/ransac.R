@@ -57,7 +57,7 @@ ransac <- function(xdata, ydata, n, threshold, good.fit.perct,
       return(family.fun$threshold.cmp(family.fun$error(ydata[test.ix], my.prediction), threshold))
     })
     also.inliners.ix <- test.inliners.ix[res]
-    flog.debug('  also inliners (needs minimum of %.2f / %d): %d + %d = %d',
+    flog.debug('  also inliners (needs minimum of %.2f / %d): % 4d + % 4d = %d',
                good.fit.perct * nrow(xdata),
                nrow(xdata),
                length(also.inliners.ix),

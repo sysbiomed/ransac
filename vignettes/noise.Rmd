@@ -8,12 +8,12 @@ output:
     self_contained: true
     number_sections: true
 params:
-  mc.cores: !r 12
+  mc.cores: !r 15
   # seed to make reproducible results
   my.seed: !r 1991
   
   # Number of lambdas to test
-  nlambda: !r 100
+  nlambda: !r 1000
   # Minimum ratio of lambda from initial
   lambda.min.ratio: !r 1e-5
   
@@ -21,19 +21,19 @@ params:
   train.perc: !r 1
 
   #
-  perturbation.perct: !r seq(0, .5, 0.005)
+  perturbation.perct: !r seq(0, .5, 0.01)
 
   #
   # Ransac
  
   # use pre-set models -- only need to change k and my.family
-  pre.set: '10vars-sparse'
+  pre.set: '1000vars-sparse'
   
   # number of iterations
-  k: !r 500
+  k: !r 2000
   
   # type of model to use
-  my.family: 'binomial.glm.auc'
+  my.family: 'binomial.glmnet.auc'
   
   # Number of observations in data
   obs: !r 100
@@ -44,11 +44,11 @@ params:
   # minimum number of points to use
   n: !r 30
   # threshold to identify inliers
-  threshold: !r .04
+  threshold: !r .7 # old: 0.04
   # number of inliers to consider good model
   good.fit.perct: !r .1
   # chose one of the lambda / alpha / penalty
-  alpha.baseline: !r 0
+  alpha.baseline: !r .5
   
   #
   # Show arguments
@@ -78,6 +78,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(reshape2)
   library(digest)
+  library(gen.rna.seq)
 })
 ```
 
@@ -88,7 +89,7 @@ suppressPackageStartupMessages({
 layout <- layout.format('~m')
 flog.layout(layout)
 flog.appender(appender.tee('logger.txt'))
-flog.threshold(INFO)
+flog.threshold(DEBUG)
 ```
 
 # Parameters
@@ -131,11 +132,6 @@ baseline.tbl   <- data.frame()
 
 
 ```{r, include=FALSE}
-#
-#
-my.random <- function(length) { 
-  rlnorm(length, meanlog = runif(1, min = 0, max= 1), sdlog = runif(1, min = .5, max= 1))
-}
 
 #
 #
@@ -165,15 +161,17 @@ print.outlier.table <- function(my.model, xdata.train, ydata.train, lambda.basel
 
   table.aux <- arrange_(table.aux, 'outliers', 'diff_class', 'id')
   flog.info('')
-  flog.info('Notes on significance of predicted, as it is calculated by logit_class(i) - round(pred(i))')
-  flog.info('')
-  flog.info(' - -1: false positive')
-  flog.info(' -  0: correct classification')
-  flog.info(' - +1: false negative')
-  flog.info('')
-  flog.info('Table with all outliers in model (plus all perturbed/natural)')
-  flog.info('')
-  cat(knitr::kable(table.aux), sep = '\n')
+  if (nrow(table.aux) > 0) {
+    flog.info('Notes on significance of predicted, as it is calculated by logit_class(i) - round(pred(i))')
+    flog.info('')
+    flog.info(' - -1: false positive')
+    flog.info(' -  0: correct classification')
+    flog.info(' - +1: false negative')
+    flog.info('')
+    flog.info('Table with all outliers in model (plus all perturbed/natural)')
+    flog.info('')
+    cat(knitr::kable(table.aux), sep = '\n')
+  }
   # not showing the distribution of error
   #flog.info('')
   #flog.info('')
@@ -222,14 +220,16 @@ print.outlier.table <- function(my.model, xdata.train, ydata.train, lambda.basel
 ```
 
 ```{r, eval=FALSE, include=FALSE}
-alpha.baseline <- .5
+alpha.baseline <- 1
+threshold <- .9
+k <- 500
 #
 set.seed(my.seed)
-perct <- 0.01
+perct <- .1
 my.data <- gen.synth(obs = obs, 
                      new.coef = base.model, 
                      perturbation.perct = perct, 
-                     xdata.fun = my.random,
+                     xdata.fun = gen.rna.seq::gen.rna.seq,
                      perfect.model = TRUE,
                      perturbation.random = TRUE)
 my.data$ydata
@@ -239,8 +239,7 @@ xdata.train <- my.data$xdata
 # normalize xdata
 xdata.train.mean <- sapply(seq(ncol(xdata.train)), function(ix) { mean(xdata.train[,ix])})
 xdata.train.sd   <- sapply(seq(ncol(xdata.train)), function(ix) { sd(xdata.train[,ix])})
-#xdata.train <- xdata.train / xdata.train.sd
-xdata.train <- (xdata.train - xdata.train.mean) / xdata.train.sd
+xdata.train <- sapply(seq(ncol(xdata.train)), function(ix.col) { (xdata.train[,ix.col] - xdata.train.mean[ix.col]) / xdata.train.sd[ix.col]})
 
 ydata.train <- as.data.frame(my.data$ydata)
 ydata.train$logit_class <- as.factor(ydata.train$logit_class)
@@ -248,11 +247,16 @@ ydata.train$real_class  <- as.factor(ydata.train$real_class)
   
 colnames(ydata.train) <- colnames(my.data$ydata)
 
+cv.folds <- balanced.cv.folds(which(ydata.train$logit_class == 0), which(ydata.train$logit_class == 1))
+foldid   <- array(0, nrow(ydata.train))
+foldid[ydata.train$logit_class == 0] <- cv.folds$output[[1]]
+foldid[ydata.train$logit_class == 1] <- cv.folds$output[[2]]
+
 baseline <- cv.glmnet(x                = xdata.train, 
                       y                = ydata.train$logit_class,
                       family           = 'binomial', 
                       alpha            = alpha.baseline,
-                      nlambda          = 100, 
+                      nlambda          = nlambda,
                       lambda.min.ratio = lambda.min.ratio,
                       #
                       standardize    = F,
@@ -275,14 +279,80 @@ suppressWarnings({
 
 #
 baseline.coef <- coef(baseline.model.pert, s = lambda.baseline)[,1]
-t(rbind(base.model,baseline.coef))
+
+ransac.cache <- file.path('..', 
+                            'cache', 
+                            sprintf('noise-perct_%.3f-k_%d-n_%d-f_%s-t_%.4f-g_%.4f-a_%.3f-p_%s-x_%s-y_%s.RData',
+                                    perct,
+                                    k, 
+                                    n, 
+                                    my.family,
+                                    threshold,
+                                    good.fit.perct,
+                                    alpha.baseline,
+                                    strtrim(digest(penalty.factor, algo = 'md5'), 10),
+                                    strtrim(digest(xdata.train, algo = 'md5'), 10),
+                                    strtrim(digest(ydata.train, algo = 'md5'), 10)))
+  if (file.exists(ransac.cache)){
+    load(ransac.cache)
+  } else {
+    result.ransac <- ransac::ransac(xdata  = xdata.train, 
+                                    ydata  = as.numeric(levels(ydata.train$logit_class)[ydata.train$logit_class]), 
+                                    k      = k, 
+                                    n      = n, 
+                                    family = my.family, 
+                                    #
+                                    threshold      = threshold, 
+                                    good.fit.perct = good.fit.perct, 
+                                    #
+                                    mc.cores       = mc.cores,
+                                    lambda         = lambda.baseline,
+                                    alpha          = alpha.baseline,
+                                    intercept      = F,
+                                    penalty.factor = penalty.factor)
+    save(result.ransac, file = ransac.cache, compress = 'bzip2')
+  }
+
+ransac.coef <- coef(result.ransac$models$all.inliers.consensus, s = lambda.baseline)[,1]
+
 aa <- data.frame(prediction = family.fun$predict(baseline.model.pert, newx = xdata.train, lambda = lambda.baseline)[,1],
-                 observation = as.numeric(levels(ydata.train$logit_class))[ydata.train$logit_class])
-aa <- arrange_(aa, 'observation', 'prediction')
+                 observation = as.numeric(levels(ydata.train$logit_class))[ydata.train$logit_class],
+                 prob = ydata.train$prob,
+                 outliers = ydata.train$outliers,
+                 type = array('Baseline', nrow(ydata.train)),
+                 y.id = as.numeric(rownames(ydata.train)))
+
+
+bb <- data.frame(prediction = family.fun$predict(result.ransac$models$all.inliers.consensus, newx = xdata.train, lambda = lambda.baseline)[,1],
+                 observation = as.numeric(levels(ydata.train$logit_class))[ydata.train$logit_class],
+                 prob = ydata.train$prob,
+                 outliers = ydata.train$outliers,
+                 type = array(sprintf('RANSAC (%d / %d)', result.ransac$models$all.inliers.consensus$nobs, nrow(ydata.train)), 
+                              nrow(ydata.train)),
+                 y.id = as.numeric(rownames(ydata.train)))
+
+miscl.ix <- unique(c(aa$y.id[(aa$prediction > 0.5) * 1 - aa$observation != 0], 
+                     bb$y.id[(bb$prediction > 0.5) * 1 - bb$observation != 0]),
+                     as.numeric(rownames(ydata.train[ydata.train$outliers != 'inlier',])))
+aa <- aa[miscl.ix,]
+bb <- bb[miscl.ix,]
+
+my.out.order <- c('observation', 'prob', 'prediction')
+bb      <- arrange_(bb, .dots = my.out.order)
+aa      <- arrange_(aa, .dots = my.out.order)
 aa$id <- seq(nrow(aa))
-ggplot(melt(aa, id.vars = 'id')) + theme_minimal() +
-  geom_point(aes(y = value, x = id, color = variable)) +
-  geom_vline(aes(xintercept = sum(ydata.train$logit_class == 0) + .5), color = 'black', linetype = 'dotted')
+bb$id   <- seq(nrow(bb))
+
+out.tbl <- rbind(aa, bb)
+out.tbl$is.miscl <- factor((out.tbl$prediction > 0.5) * 1 - out.tbl$observation == 0, levels = c(TRUE, FALSE), labels = c('','miscl.'))
+out.melt <- melt(out.tbl, id.vars = c('id', 'y.id', 'type', 'is.miscl'), measure.vars = c('prediction', 'prob'))
+
+t(rbind(base.model,ransac.coef, baseline.coef))[base.model != 0,]
+ggplot(out.melt) + theme_minimal() + 
+  labs(title = 'Showing only misclassifications and perturbations', subtitle = sprintf('alpha = %.4f | lambda = %.4f | threshold = %.3f | k = %d', alpha.baseline, lambda.baseline, threshold, k)) +
+  geom_point(aes(y = value, x = id, color = variable, shape = is.miscl)) +
+  geom_vline(aes(xintercept = sum(ydata.train$logit_class[miscl.ix] == 0) + .5), color = 'black', linetype = 'dotted') +
+  facet_wrap( ~ type, ncol = 1)
 
 #print.outlier.table(baseline.model.pert, xdata.train, ydata.train, lambda.baseline)
 ```
@@ -299,7 +369,7 @@ for (perct in perturbation.perct) {
   my.data <- gen.synth(obs = obs, 
                        new.coef = base.model, 
                        perturbation.perct = perct, 
-                       xdata.fun = my.random,
+                       xdata.fun = gen.rna.seq::gen.rna.seq,
                        perfect.model = TRUE,
                        perturbation.random = TRUE)
   #
@@ -340,7 +410,7 @@ for (perct in perturbation.perct) {
   xdata.train.mean <- sapply(seq(ncol(xdata.train)), function(ix) { mean(xdata.train[,ix])})
   xdata.train.sd   <- sapply(seq(ncol(xdata.train)), function(ix) { sd(xdata.train[,ix])})
   #xdata.train <- xdata.train / xdata.train.sd
-  xdata.train <- (xdata.train - xdata.train.mean) / xdata.train.sd
+  xdata.train <- sapply(seq(ncol(xdata.train)), function(ix.col) { (xdata.train[,ix.col] - xdata.train.mean[ix.col]) / xdata.train.sd[ix.col]})
   
   ydata.train <- as.data.frame(my.data$ydata[train.ix,])
   colnames(ydata.train) <- colnames(my.data$ydata)
@@ -383,7 +453,7 @@ for (perct in perturbation.perct) {
 
   ransac.cache <- file.path('..', 
                             'cache', 
-                            sprintf('noise-ransac-%.3fk_%d-n_%d-f_%s-t_%.4f-g_%.4f-a_%.3f-p_%s-x_%s-y_%s.RData',
+                            sprintf('noise-perct_%.3f-k_%d-n_%d-f_%s-t_%.4f-g_%.4f-a_%.3f-p_%s-x_%s-y_%s.RData',
                                     perct,
                                     k, 
                                     n, 
@@ -413,7 +483,7 @@ for (perct in perturbation.perct) {
                                       intercept      = F,
                                       penalty.factor = penalty.factor)
     })
-    save(result.ransac, lambda.baseline, file = ransac.cache)
+    save(result.ransac, lambda.baseline, file = ransac.cache, compress = 'bzip2')
   }
   
   #
@@ -441,6 +511,13 @@ for (perct in perturbation.perct) {
     ransac.output <- capture.output({
       ransac.tbl.newline <- print.outlier.table(result.ransac$models$all.inliers.consensus, xdata.train, ydata.train, lambda.baseline)
     })
+    
+    best.ransac.ix <- result.ransac$best.ix$all.inliers.consensus
+    consensus.inliers <- result.ransac$error.array[[best.ransac.ix]]$inliers.ix
+    ransac.tbl.newline$model.inlier       <- sum(ydata.train[consensus.inliers, ]$outliers == 'inlier')
+    ransac.tbl.newline$model.natural      <- sum(ydata.train[consensus.inliers, ]$outliers == 'natural')
+    ransac.tbl.newline$model.perturbation <- sum(ydata.train[consensus.inliers, ]$outliers == 'perturbation')
+
     ransac.tbl <- rbind(ransac.tbl,ransac.tbl.newline)
   }
 
@@ -449,7 +526,7 @@ for (perct in perturbation.perct) {
   # Output
   # 
   
-  if (only.show.mod == FALSE || perct %% only.show.mod == 0) {
+  if (only.show.mod == FALSE || (100 * perct) %% (100 * only.show.mod) == 0) {
     flog.info('\n## Testing for noise %% at %.3f', perct)
     #
     flog.info('\n### Data')
@@ -527,8 +604,6 @@ for (perct in perturbation.perct) {
       flog.info('```')
     } else {
       cat(ransac.output, sep = '\n')
-      #my.model <- result.ransac$models$all.inliers.consensus
-      #result.ransac$error.array[[1000]]$inliers.ix
     }  
   
     
@@ -540,38 +615,62 @@ for (perct in perturbation.perct) {
 # Summary of noise experiments
 
 ```{r, echo=FALSE}
-baseline.tbl.sum <- data.frame(perct = baseline.tbl$perct,
+baseline.tbl.sum <- data.frame(perct = baseline.tbl$total.perturbation,
                                inliers = baseline.tbl$inliers / baseline.tbl$total.inliers,
                                natural = baseline.tbl$natural / baseline.tbl$total.natural,
                                perturbation = baseline.tbl$perturbation / baseline.tbl$total.perturbation,
                                type = array('Baseline', nrow(baseline.tbl)))
 
 # 
-ransac.tbl.sum <- data.frame(perct = ransac.tbl$perct,
-                               inliers = ransac.tbl$inliers / ransac.tbl$total.inliers,
-                               natural = ransac.tbl$natural / ransac.tbl$total.natural,
-                               perturbation = ransac.tbl$perturbation / ransac.tbl$total.perturbation,
-                               type = array('RANSAC Consensus', nrow(ransac.tbl)))
+ransac.tbl.sum <- data.frame(perct = baseline.tbl$total.perturbation,
+                             inliers = ransac.tbl$inliers / ransac.tbl$total.inliers,
+                             natural = ransac.tbl$natural / ransac.tbl$total.natural,
+                             perturbation = ransac.tbl$perturbation / ransac.tbl$total.perturbation,
+                             type = array('RANSAC', nrow(ransac.tbl)))
 
 tbl.melt <- melt(rbind(baseline.tbl.sum, ransac.tbl.sum), id.vars = c('perct', 'type'))
 tbl.melt$identifier <- paste0(tbl.melt$type, ' ', tbl.melt$variable)
 tbl.melt <- subset(tbl.melt, !is.nan(value))
 #
 ggplot(tbl.melt, aes(x = perct, y = value, color = identifier, shape = identifier, linetype = identifier)) + 
-  theme_minimal() + theme(legend.position = "bottom") + expand_limits(y = c(0,1)) +
+  theme_minimal() + theme(legend.position = "top") + expand_limits(y = c(0,1)) +
   #  facet_wrap( ~ type, ncol = 1) +
   geom_line() + geom_point() + 
-    scale_color_manual(name = 'Combined', values = c('#9E5D00', '#007700', '#D55E00', '#009E73')) + 
-  scale_shape_manual(name = 'Combined', values = c(1, 1, 5, 5)) + 
-  scale_linetype_manual(name = 'Combined', values = c('solid', 'solid', 'longdash', 'longdash')) +
+    scale_color_manual(name = '', values = c('#9E5D00', '#007700', '#D55E00', '#009E73')) + 
+  scale_shape_manual(name = '', values = c(1, 1, 5, 5)) + 
+  scale_linetype_manual(name = '', values = c('solid', 'solid', 'longdash', 'longdash')) +
   #geom_line(data = tbl.melt.ransac) + geom_point(data = tbl.melt.ransac) + 
-  ggtitle('Baseline model: Misclassification rate by type of data point')
+  labs(title = 'Misclassification rate by type of data point')
 ```
 
+# Summary of Outliers in RANSAC models
 
+```{r, echo=FALSE}
+ransac.tbl.outlier <- data.frame(perct = ransac.tbl$total.perturbation,
+                                 inliers = ransac.tbl$model.inlier / ransac.tbl$total.inliers,
+                                 natural = ransac.tbl$model.natural / ransac.tbl$total.natural,
+                                 perturbation = ransac.tbl$model.perturbation / ransac.tbl$total.perturbation)
+
+tbl.outlier.melt <- melt(ransac.tbl.outlier, id.vars = c('perct'))
+tbl.outlier.melt <- subset(tbl.outlier.melt, !is.nan(value) & !is.nan(value))
+#
+ggplot(tbl.outlier.melt, aes(x = perct, y = value, color = variable, shape = variable, linetype = variable)) + 
+  theme_minimal() + theme(legend.position = "top") + expand_limits(y = c(0,1)) +
+  #  facet_wrap( ~ type, ncol = 1) +
+  geom_line() + geom_point() + 
+    scale_color_manual(name = '', values = c('#0072B2', '#CC79A7')) + 
+  scale_shape_manual(name = '', values = c(1, 1, 5, 5)) + 
+  scale_linetype_manual(name = '', values = c('solid', 'solid', 'longdash', 'longdash')) +
+  #geom_line(data = tbl.melt.ransac) + geom_point(data = tbl.melt.ransac) + 
+  labs(title = 'Percentage of data included in the RANSAC Model\n(relative to total inlier/perturbation)',
+       subtitle = 'ideal scenario: perturbation = 0 and inliers = 1',
+       x = sprintf('Count of perturbed data points (out of %d total observations)', obs),
+       y = 'Observations included in model (%)')
+```
+
+```{r, eval=FALSE, fig.height=15}
 # Plot Everything
 
-```{r, include=TRUE, fig.height=15}
 print(ggplot(new.ydata) + 
   #
   theme_minimal() + 
@@ -594,7 +693,7 @@ print(ggplot(new.ydata) +
 
 
 
-```{r,eval=FALSE,include=FALSE}
+```{r,include=FALSE,eval=FALSE}
 new.xdata <- melt(data.frame(id = seq(nrow(xdata.train)), 
                              #xdata.train[,sample(seq(nrow(xdata.train)), 3)]),
                              xdata.train), 

@@ -57,31 +57,34 @@ gen.synth <- function(obs,
   # rename rows
   rownames(ydata) <- rownames(xdata) <- seq(obs)
 
+
   # perturbation (balanced)
 
   # start with real class
   ydata$logit_class <- ydata$real_class
   # calculate size of perturbation
   pert.size <- round(obs * perturbation.perct)
-  if (perturbation.random) {
-    # TRUE: class 1
-    # FALSE: class 0
-    start.by <- (runif(1) > 0.5)
-    my.sample <- list(class1 = sample(which(ydata$real_class == 1), sum((ydata$real_class == 1))),
-                      class0 = sample(which(ydata$real_class == 0), sum((ydata$real_class == 0))))
-    for (ix in seq(pert.size)) {
-      ix.name <- sprintf('class%d', start.by * 1)
-      ydata$logit_class[my.sample[[ix.name]][1]] <- (ydata$logit_class[my.sample[[ix.name]][1]] - 1) * -1
-      #
-      my.sample[[ix.name]] <- my.sample[[ix.name]][-1]
-      start.by <- !start.by
-    }
-  } else {
-    pr.ix <- sort(pr,index.return=T)$ix
 
-    tail.size <- ceiling(obs * perturbation.perct / 2)
+  if (pert.size > 0) {
+    if (perturbation.random) {
+      # TRUE: class 1
+      # FALSE: class 0
+      start.by <- (runif(1) > 0.5)
+      my.sample <- list(class1 = sample(which(ydata$real_class == 1), sum((ydata$real_class == 1))),
+                        class0 = sample(which(ydata$real_class == 0), sum((ydata$real_class == 0))))
+      for (ix in seq(pert.size)) {
+        ix.name <- sprintf('class%d', start.by * 1)
+        ydata$logit_class[my.sample[[ix.name]][1]] <- (ydata$logit_class[my.sample[[ix.name]][1]] - 1) * -1
+        #
+        my.sample[[ix.name]] <- my.sample[[ix.name]][-1]
+        start.by <- !start.by
+      }
+    } else {
+      pr.ix <- sort(pr,index.return=T)$ix
 
-    if (pert.size > 0) {
+      tail.size <- ceiling(obs * perturbation.perct / 2)
+
+
       forced.outliers.count <- c(0,0)
       for (ix in seq(obs)) {
         first.ix <- pr.ix[ix]
