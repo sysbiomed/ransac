@@ -20,6 +20,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
                         baseline = list(), show.title = T,
                         only_consensus = T, outliers = NULL,
                         show.misclass = T,
+                        print.plots = T,
                         ...) {
   strOut <- textConnection("foo", open = 'w')
   sink(strOut)
@@ -188,7 +189,6 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   #
   if (show.title)      { g1 <- g1 + ggtitle(name) }
   if (!only_consensus) { g1 <- g1 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  print(g1)
 
   #
   # Error plot
@@ -199,7 +199,11 @@ plot.ransac <- function(result.ransac, xdata, ydata,
     scale_y_continuous(limits = c(-1,1))
   if (show.title)      { g2 <- g2 + ggtitle(name) }
   if (!only_consensus) { g2 <- g2 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
-  print(g2)
+
+  if (print.plots) {
+    print(g1)
+    print(g2)
+  }
 
   #
   # Textual results
@@ -292,12 +296,12 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   rownames(coef.df) <- unlist(description)
   colnames(coef.df) <- c('Intercept', colnames(xdata))
   cat(sprintf('Coefficients:'), file = strOut, sep = '\n')
-  cat(capture.output(coef.df), file = strOut, sep = '\n')
+  cat(capture.output(coef.df[,colSums(coef.df) != 0]), file = strOut, sep = '\n')
 
   sink()
   close(strOut)
   #
   # return the misclassifications
-  return(list(debug = foo, description = description, misclassifications = miscl))
+  return(list(debug = foo, description = description, misclassifications = miscl, plots = list(classification = g1, error = g2)))
 }
 
