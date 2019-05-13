@@ -4,9 +4,8 @@
 \alias{ransac.binomial.glmnet}
 \title{Support glmnet logistic regression}
 \usage{
-ransac.binomial.glmnet(auc = F, residuals = "deviance")
+ransac.binomial.glmnet(auc = F, residuals = "pearson")
 }
 \description{
 Uses the binomial distribution
 }
-

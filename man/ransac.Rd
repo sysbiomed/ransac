@@ -5,7 +5,7 @@
 \title{RANSAC}
 \usage{
 ransac(xdata, ydata, n, threshold, good.fit.perct, k = 100,
-  family = "binomial", mc.cores = 1, ...)
+  family = "binomial.glm", mc.cores = 1, ...)
 }
 \arguments{
 \item{xdata}{co-variates (rows: observations | coluns: co-variates)}
@@ -27,4 +27,3 @@ ransac(xdata, ydata, n, threshold, good.fit.perct, k = 100,
 \description{
 RANSAC
 }
-

@@ -152,16 +152,15 @@ if (file.exists(cache.name)) {
   flog.info('Loading cached ransac from %s', cache.name)
   load(cache.name)
 } else {
-  results.ransac.pert <- ransac(xdata, ydata.pert, n = n, threshold = threshold, 
+  results.ransac.pert <- ransac(xdata, ydata.pert, n = 20, threshold = threshold, 
                                 good.fit.perct = good.fit.perct, k = k,
                                 family = family, mc.cores = mc.cores,
                                 nlambda = 100, alpha = 0)
   flog.info('Saving cache to disk (%s)', cache.name)
   save(results.ransac.pert, xdata, ydata, ydata.pert, family, file = cache.name)
 }
-plot(results.ransac.pert, xdata, ydata.pert, 
-     family = family, 
-     name = 'With perturbation, error: ydata_perturbation - ydata_predicted')
+plot(results.ransac.pert, xdata, ydata.pert, family = family, name = 'With perturbation')
 #
 ```
+
 

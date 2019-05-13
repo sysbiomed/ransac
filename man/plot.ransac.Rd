@@ -5,8 +5,9 @@
 \title{Function to print the results from RANSAC}
 \usage{
 \method{plot}{ransac}(result.ransac, xdata, ydata, ydata.prob = NULL,
-  family = "binomial", name = "", baseline = list(), show.title = T,
-  only_consensus = T, ...)
+  family = "binomial.glm", name = "", baseline = list(), show.title = T,
+  only_consensus = T, outliers = NULL, show.misclass = T,
+  print.plots = T, ...)
 }
 \arguments{
 \item{...}{}
@@ -14,4 +15,3 @@
 \description{
 Function to print the results from RANSAC
 }
-

@@ -15,4 +15,3 @@ higher.consensus(family.fun, el.error, el.model, best.error, best.model)
 \description{
 Choose model with higher consensus set
 }
-

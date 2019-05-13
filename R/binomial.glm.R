@@ -53,7 +53,13 @@ ransac.binomial.glm <- function(auc = F, residuals = 'pearson') {
 
   # Pearson
   error.dev.fun <- function(ydata, ydata.predicted) {
-    return(abs((ydata - ydata.predicted)/sqrt(ydata.predicted*(1-ydata.predicted))))
+    top <- (ydata - ydata.predicted)
+    top.ix.0 <- top == 0
+    predicted.0.or.1 <- ydata.predicted == 1 | ydata.predicted == 0
+    result <- abs(top) / sqrt(ydata.predicted*(1-ydata.predicted))
+    result[top.ix.0] <- 0
+    result[predicted.0.or.1] <- Inf
+    return(result)
   }
 
   # prediction function
@@ -82,9 +88,12 @@ ransac.binomial.glm <- function(auc = F, residuals = 'pearson') {
     # generate balanced folds for the cross-validation
 
     new.df <- data.frame(xdata, logit_class = ydata)
-    my.model <- glm(logit_class ~. , data = new.df, family = binomial(link = 'logit'),
-                    control = glm.control(maxit = 1000),
-                    intercept = intercept)
+    suppressWarnings({
+      my.model <- glm(logit_class ~. , data = new.df, family = binomial(link = 'logit'),
+                      control = glm.control(maxit = 1000),
+                      intercept = intercept)
+    })
+    my.model$data <- NULL
     return(my.model)
     #
   }

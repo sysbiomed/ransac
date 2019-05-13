@@ -1,16 +1,26 @@
-#
-#
-#
-find.lambda <- function(lambda) {
-  return(unique(sort(c(1000,100, 10,
-                c(50, 10, 5, 4, 3, 2, 1.5, 1,
-                  #.9, .8, .7, .6, .5, .2, .3, .4, .1,
-                  .5, .1,
-                  1e-2, #5e-2,
-                  1e-3, #5e-3,
-                  1e-4, #5e-4,
-                  1e-5, #5e-5,
-                  1e-6, #5e-6,
-                  1e-7#, 5e-7
-                  ) * lambda), decreasing = T)))
+#' Create a sequence of lambda values
+#'
+#' This generates a lambda vector with values that
+#'  will be used in GLMNET in the coordinate descent
+#'  algorightm. It is needed as it builds on each lambda
+#'
+#' @param lambda target that should be calculated
+#' @param extend
+#'
+#' @return
+#' @export
+#'
+#' @examples
+#' find.lambda(0.08)
+find.lambda <- function(lambda, extend = FALSE) {
+  if (extend) {
+    extend.vec <- seq(1, 3, 0.05) * lambda
+  } else {
+    extend.vect <- c()
+  }
+  ret.vect <- unique(sort(c(10, 8, 5,
+                            c(seq(5, 50, 5), 4, 3, 2.5, 2, 1.75, 1.5, 1.25, 1,
+                              extend.vect
+                            ) * lambda), decreasing = T))
+  return(ret.vect)
 }

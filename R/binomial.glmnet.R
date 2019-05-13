@@ -13,6 +13,7 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'pearson') {
   #
   #
   # Functions
+  require(glmnet)
 
   # Number of observation in model
   nobs.fun <- function(model) {
@@ -26,12 +27,12 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'pearson') {
 
   # Get Coefficients function
   coef.fun <- function(object, lambda, ...) {
-    coef(object = object, s = lambda)
+    as.vector(coef(object = object, s = lambda))
   }
 
   # Prediction function
   predict.fun <- function(object, newx, lambda, ...) {
-    predict(object = object, newx = newx, s = lambda, type = 'response')
+    as.vector(predict(object = object, newx = newx, s = lambda, type = 'response'))
   }
 
   # Using AUC
@@ -47,18 +48,18 @@ ransac.binomial.glmnet <- function(auc = F, residuals = 'pearson') {
 
   # Fitting model
   fit.fun <- function(xdata, ydata, lambda, alpha = 0, penalty.factor = array(1, ncol(xdata)),
-                      intercept = TRUE,
+                      intercept = FALSE,
                       ...) {
     # need more than one lambda to guarantee convergence
     lambda.v <- find.lambda(lambda)
-
+    flog.debug('Using lambdas: %s', paste(lambda.v, collapse = ', '))
     # need to suppress wanrings
     return(suppressWarnings(glmnet(xdata, ydata,
                                    alpha = alpha,
                                    family = 'binomial',
                                    lambda = lambda.v,
                                    standardize = F,
-                                   intercept= FALSE,
+                                   intercept = intercept,
                                    penalty.factor = penalty.factor)))
     #
   }

@@ -4,9 +4,8 @@
 \alias{ransac.binomial.glm}
 \title{Support glm logistic regression}
 \usage{
-ransac.binomial.glm(auc = F)
+ransac.binomial.glm(auc = F, residuals = "pearson")
 }
 \description{
 Uses the binomial distribution
 }
-

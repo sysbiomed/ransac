@@ -16,13 +16,13 @@
 #' @examples
 plot.ransac <- function(result.ransac, xdata, ydata,
                         ydata.prob = NULL,
-                        family = 'binomial', name = '',
+                        family = 'binomial.glm', name = '',
                         baseline = list(), show.title = T,
                         only_consensus = T, outliers = NULL,
                         show.misclass = T,
                         print.plots = T,
                         ...) {
-  strOut <- textConnection("foo", open = 'w')
+  strOut <- textConnection("foo", open = 'w', local = TRUE)
   sink(strOut)
   #
   # retrieve family by name
@@ -59,33 +59,33 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   models <- list()
 
   # build from result.ransac
-  if (!only_consensus) {
+  if (FALSE && !only_consensus) {
     #
-    if (!is.na(result.ransac$models$inliers.inliers.ydata)) {
+    if (any(!is.na(result.ransac$models$inliers.inliers.ydata))) {
       description$rans.5 <- 'RANSAC Initial + Inliers'
       models$rans.5      <- result.ransac$models$inliers.inliers.ydata
     }
-    if (!is.na(result.ransac$models$inliers.all.ydata)) {
+    if (any(!is.na(result.ransac$models$inliers.all.ydata))) {
       description$rans.2 <- 'RANSAC Initial + {In,Out}liers'
       models$rans.2      <- result.ransac$models$inliers.all.ydata
     }
-    if (!is.na(result.ransac$models$all.inliers.model.inliers)) {
+    if (any(!is.na(result.ransac$models$all.inliers.model.inliers))) {
       description$rans.3 <- 'RANSAC Refitted + Inliers'
       models$rans.3      <- result.ransac$models$all.inliers.model.inliers
     }
-    if (!is.na(result.ransac$models$all.inliers.all.ydata)) {
+    if (any(!is.na(result.ransac$models$all.inliers.all.ydata))) {
       description$rans.4 <- 'RANSAC Refitted + {In,Out}liers'
       models$rans.4      <- result.ransac$models$all.inliers.all.ydata
     }
-    if (!is.na(result.ransac$models$all.inliers.consensus)) {
+    if (any(!is.na(result.ransac$models$all.inliers.consensus))) {
       description$ransac <- 'RANSAC Refitted + Consensus'
     }
   } else {
-    if (!is.na(result.ransac$models$all.inliers.consensus)) {
+    if (any(!is.na(result.ransac$models$all.inliers.consensus))) {
       description$ransac <- 'RANSAC'
     }
   }
-  if (!is.na(result.ransac$models$all.inliers.consensus)) {
+  if (any(!is.na(result.ransac$models$all.inliers.consensus))) {
     models$ransac      <- result.ransac$models$all.inliers.consensus
   }
 
@@ -177,18 +177,18 @@ plot.ransac <- function(result.ransac, xdata, ydata,
 
   #
   # Classification plot
-  g1 <- ggplot(data = my.df.class) +
+  g1 <- ggplot(data = my.df.class %>% arrange(desc(type))) +
     geom_vline(aes(xintercept = (sum(ydata == 0) + 0.5)), color = 'black', linetype = 'dotted') +
     geom_text(aes(x=sum(ydata == 0)/2), y = 1.05, label= "Class 0", color = '#999999', family = 'Helvetica-Narrow', size = 3.5) +
     geom_text(aes(x=sum(ydata == 0) + sum(ydata == 1) / 2), y = 1.05, label= "Class 1", color = '#999999', family = 'Helvetica-Narrow', size = 3.5) +
     scale_y_continuous(expand = c(0,.1)) +
-    theme_minimal() + theme(legend.position="none") +
+    theme_minimal() + #theme(legend.position="none") +
     ylab('Classification') +
     xlab('Model') +
-    geom_point(aes(ix, value, color = type)) + facet_wrap( ~ type , ncol = 3)
+    geom_point(aes(ix, value, color = type), alpha = 1, shape = 5) #+ facet_wrap( ~ type , ncol = 3)
   #
   if (show.title)      { g1 <- g1 + ggtitle(name) }
-  if (!only_consensus) { g1 <- g1 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
+  if (FALSE && !only_consensus) { g1 <- g1 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
 
   #
   # Error plot
@@ -198,7 +198,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
     geom_quasirandom(aes(type, value, color = type), bandwidth = 2, method = 'quasirandom') +
     scale_y_continuous(limits = c(-1,1))
   if (show.title)      { g2 <- g2 + ggtitle(name) }
-  if (!only_consensus) { g2 <- g2 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
+  if (FALSE && !only_consensus) { g2 <- g2 + theme(axis.ticks = element_blank(), axis.text.x = element_blank())}
 
   if (print.plots) {
     print(g1)
@@ -295,6 +295,7 @@ plot.ransac <- function(result.ransac, xdata, ydata,
   }
   rownames(coef.df) <- unlist(description)
   colnames(coef.df) <- c('Intercept', colnames(xdata))
+  coef.df[is.na(coef.df)] <- 0
   cat(sprintf('Coefficients:'), file = strOut, sep = '\n')
   cat(capture.output(coef.df[,colSums(coef.df) != 0]), file = strOut, sep = '\n')
 

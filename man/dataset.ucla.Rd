@@ -9,4 +9,3 @@ dataset.ucla()
 \description{
 from [UCLA](http://statistics.ats.ucla.edu/stat/r/dae/logit.htm)
 }
-

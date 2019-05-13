@@ -18,4 +18,3 @@ Get RANSAC family function
 \examples{
 ransac.family('ransac.binomial.glm')
 }
-

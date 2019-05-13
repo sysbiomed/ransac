@@ -15,4 +15,3 @@ lower.loss(el.error, el.model, best.error, best.model)
 \description{
 Choose model with lower loss
 }
-
